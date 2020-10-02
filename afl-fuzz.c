@@ -42,6 +42,7 @@
 #include "debug.h"
 #include "alloc-inl.h"
 #include "hash.h"
+#include "cJSON.h"
 
 #include <stdio.h>
 #include <unistd.h>
@@ -243,6 +244,9 @@ struct queue_entry {
   u8* fname;                          /* File name for the test case      */
   u32 len;                            /* Input length                     */
 
+  u8* format_file;                    /* Format file of the test case     */
+  u32 format_len;                     /* Format file length               */
+
   u8  cal_failed,                     /* Calibration failed?              */
       trim_done,                      /* Trimmed?                         */
       was_fuzzed,                     /* Had any fuzzing done yet?        */
@@ -314,7 +318,11 @@ enum {
   /* 13 */ STAGE_EXTRAS_UI,
   /* 14 */ STAGE_EXTRAS_AO,
   /* 15 */ STAGE_HAVOC,
-  /* 16 */ STAGE_SPLICE
+  /* 16 */ STAGE_SPLICE,
+  /* 17 */ STAGE_CHUNK_DEL,
+  /* 18 */ STAGE_CHUNK_IN,
+  /* 19 */ STAGE_CHUNK_EX,
+  /* 20 */ STAGE_CHUNK_HAVOC
 };
 
 /* Stage value types */
@@ -801,12 +809,14 @@ static void mark_as_redundant(struct queue_entry* q, u8 state) {
 
 /* Append new test case to the queue. */
 
-static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
+static void add_to_queue(u8* fname, u8* format_file, u32 len, u8 passed_det) {
 
   struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
 
+  /*Need to change*/
   q->fname        = fname;
   q->len          = len;
+  q->format_file  = format_file;
   q->depth        = cur_depth + 1;
   q->passed_det   = passed_det;
 
@@ -1473,10 +1483,18 @@ static void read_testcases(void) {
 
   for (i = 0; i < nl_cnt; i++) {
 
+    /* skip .json file */
+    u8* file_type;
+    file_type = strrchr(nl[i]->d_name, '.');
+    if (file_type != NULL && strcmp(file_type, ".json") == 0) {
+      continue;
+    }
+
     struct stat st;
 
     u8* fn = alloc_printf("%s/%s", in_dir, nl[i]->d_name);
     u8* dfn = alloc_printf("%s/.state/deterministic_done/%s", in_dir, nl[i]->d_name);
+    u8 *format_file = alloc_printf("%s/%s.json", in_dir, nl[i]->d_name);
 
     u8  passed_det = 0;
 
@@ -1507,8 +1525,11 @@ static void read_testcases(void) {
     if (!access(dfn, F_OK)) passed_det = 1;
     ck_free(dfn);
 
-    add_to_queue(fn, st.st_size, passed_det);
+    if (access(format_file, F_OK) || access(format_file, R_OK)) {
+      ck_free(format_file);
+    }
 
+    add_to_queue(fn, format_file, st.st_size, passed_det);
   }
 
   free(nl); /* not tracked */
@@ -3162,6 +3183,7 @@ static void write_crash_readme(void) {
 static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
   u8  *fn = "";
+  u8  *format_file = "";
   u8  hnb;
   s32 fd;
   u8  keeping = 0, res;
@@ -3187,7 +3209,9 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #endif /* ^!SIMPLE_FILES */
 
-    add_to_queue(fn, len, 0);
+
+    format_file = alloc_printf("%s.json", fn);
+    add_to_queue(fn, format_file, len, 0);
 
     if (hnb == 2) {
       queue_top->has_new_cov = 1;
@@ -3212,6 +3236,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     keeping = 1;
 
   }
+
+
 
   switch (fault) {
 
@@ -3343,6 +3369,9 @@ keep_as_crash:
 
 }
 
+static u8 save_format_if_interesting() {
+  
+}
 
 /* When resuming, try to find the queue position to start from. This makes sense
    only when resuming, and when we can find the original fuzzer_stats. */
@@ -4994,6 +5023,11 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 
 }
 
+cJSON *parse_json(uint8_t *buf) {
+  cJSON *cjson_head;
+  // cjson_head = cJSON_Parse(buf);
+  return cjson_head;
+}
 
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
@@ -5002,7 +5036,11 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 static u8 fuzz_one(char** argv) {
 
   s32 len, fd, temp_len, i, j;
+  s32 format_len;
   u8  *in_buf, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
+  u8  *format_in;
+  cJSON *in_json, *out_json, *orig_json, *json_iter;
+  s32 format_fd;
   u64 havoc_queued,  orig_hit_cnt, new_hit_cnt;
   u32 splice_cycle = 0, perf_score = 100, orig_perf, prev_cksum, eff_cnt = 1;
 
@@ -5069,7 +5107,7 @@ static u8 fuzz_one(char** argv) {
 
   close(fd);
 
-  /* We could mmap() out_buf as MAP_PRIVATE, but we end up clobbering every
+    /* We could mmap() out_buf as MAP_PRIVATE, but we end up clobbering every
      single byte anyway, so it wouldn't give us any performance or memory usage
      benefits. */
 
@@ -5135,6 +5173,24 @@ static u8 fuzz_one(char** argv) {
 
   memcpy(out_buf, in_buf, len);
 
+  if (queue_cur->format_file != NULL && strcmp(queue_cur->format_file, "") != 0)
+  {
+    format_fd = open(queue_cur->format_file, O_RDONLY);
+    if (fd < 0)
+      PFATAL("Unable to open '%s'", queue_cur->format_file);
+    /* TODO: need to fix */
+    format_len = 300;
+
+    format_in = mmap(0, format_len, PROT_READ | PROT_WRITE, MAP_PRIVATE, format_fd, 0);
+    in_json = parse_json(format_in);
+    if (in_json == NULL)
+    {
+      PFATAL("Unable to parse '%s'", queue_cur->format_file);
+    }
+    orig_json = parse_json(format_in);
+    close(format_fd);
+  }
+
   /*********************
    * PERFORMANCE SCORE *
    *********************/
@@ -5155,6 +5211,29 @@ static u8 fuzz_one(char** argv) {
     goto havoc_stage;
 
   doing_det = 1;
+
+  /*********************************************
+   * CHUNK BASED MUTATION                      *
+   * ******************************************/
+  if(in_json != NULL) {
+    stage_name = "chunk_insert";
+    json_iter = in_json->child;
+    while (json_iter)
+    {
+      /* insert chunk */
+      json_iter = json_iter->next;
+    }
+
+    stage_name = "chunk_delete";
+    json_iter = in_json->child;
+    while (json_iter)
+    {
+      /* delete chunk */
+      json_iter = json_iter->next;
+    }
+
+    stage_name = "chunk_exchange";
+  }
 
   /*********************************************
    * SIMPLE BITFLIP (+dictionary construction) *
