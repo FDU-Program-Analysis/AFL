@@ -244,8 +244,9 @@ struct queue_entry {
   u8* fname;                          /* File name for the test case      */
   u32 len;                            /* Input length                     */
 
-  u8* format_file;                    /* Format file of the test case     */
+  u8* format_file;                    /* Format file name of the test case*/
   u32 format_len;                     /* Format file length               */
+  cJSON* cjson_head;                  /* Json struct head of format file  */
 
   u8  cal_failed,                     /* Calibration failed?              */
       trim_done,                      /* Trimmed?                         */
@@ -840,7 +841,6 @@ static void add_to_queue(u8* fname, u8* format_file, u32 len, u8 passed_det) {
     q_prev100 = q;
 
   }
-
   last_path_time = get_cur_time();
 
 }
@@ -1502,6 +1502,10 @@ static void read_testcases(void) {
  
     if (lstat(fn, &st) || access(fn, R_OK))
       PFATAL("Unable to access '%s'", fn);
+    
+    if (access(format_file, R_OK)) {
+      PFATAL("Unable to access '%s'", fn);
+    }
 
     /* This also takes care of . and .. */
 
@@ -1525,9 +1529,9 @@ static void read_testcases(void) {
     if (!access(dfn, F_OK)) passed_det = 1;
     ck_free(dfn);
 
-    if (access(format_file, F_OK) || access(format_file, R_OK)) {
-      ck_free(format_file);
-    }
+    // if (access(format_file, F_OK) || access(format_file, R_OK)) {
+    //   ck_free(format_file);
+    // }
 
     add_to_queue(fn, format_file, st.st_size, passed_det);
   }
@@ -4544,8 +4548,33 @@ static u32 next_p2(u32 val) {
   while (val > ret) ret <<= 1;
   return ret;
 
-} 
+}
 
+cJSON *parse_json(const u8 *format_file) {
+  cJSON *cjson_head;
+  s32 fd;
+  u8 *in_buf;
+  struct stat st;
+  s32 n;
+  if (lstat(format_file, &st))
+  {
+    PFATAL("Unable to access '%d'", fd);
+  }
+  fd = open(format_file, O_RDONLY);
+  in_buf = ck_alloc_nozero(st.st_size);
+  n = read(fd, in_buf, st.st_size);
+  cjson_head = cJSON_Parse(in_buf);
+  if (cjson_head == NULL)
+  {
+    PFATAL("Unable to parase '%s'", format_file);
+  }
+  close(fd);
+  ck_free(in_buf);
+  return cjson_head;
+}
+
+#define CHUNK_START(chunk) ((cJSON *)chunk)->child->valueint
+#define CHUNK_END(chunk) ((cJSON *)chunk)->child->next->valueint
 
 /* Trim all new test cases to save cycles when doing deterministic checks. The
    trimmer uses power-of-two increments somewhere between 1/16 and 1/1024 of
@@ -4560,6 +4589,11 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
   u32 trim_exec = 0;
   u32 remove_len;
   u32 len_p2;
+  cJSON* cjson_head;
+  cJSON* cjson_iter;
+  cJSON* cjson_start;
+  cJSON* cjson_end;
+  
 
   /* Although the trimmer will be less useful when variable behavior is
      detected, it will still work to some extent, so we don't check for
@@ -4619,15 +4653,28 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
         memmove(in_buf + remove_pos, in_buf + remove_pos + trim_avail, 
                 move_tail);
 
-        /* Let's save a clean trace, which will be needed by
+        /* TODO: need to update the format file */
+        cjson_head = parse_json(q->format_file);
+        cjson_iter = cjson_head->child;
+        while (cjson_iter != NULL && CHUNK_START(cjson_iter) < remove_pos) {
+          cjson_start = cjson_iter;
+          cjson_iter = cjson_iter->next;
+        }
+        while (cjson_iter != NULL && CHUNK_END(cjson_iter) > remove_pos + trim_avail) {
+          cjson_end = cjson_iter;
+          cjson_iter = cjson_iter->next;
+        }
+        
+
+          /* Let's save a clean trace, which will be needed by
            update_bitmap_score once we're done with the trimming stuff. */
 
-        if (!needs_write) {
+          if (!needs_write)
+          {
 
-          needs_write = 1;
-          memcpy(clean_trace, trace_bits, MAP_SIZE);
-
-        }
+            needs_write = 1;
+            memcpy(clean_trace, trace_bits, MAP_SIZE);
+          }
 
       } else remove_pos += remove_len;
 
@@ -5023,12 +5070,6 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 
 }
 
-cJSON *parse_json(uint8_t *buf) {
-  cJSON *cjson_head;
-  // cjson_head = cJSON_Parse(buf);
-  return cjson_head;
-}
-
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
    skipped or bailed out. */
@@ -5182,12 +5223,12 @@ static u8 fuzz_one(char** argv) {
     format_len = 300;
 
     format_in = mmap(0, format_len, PROT_READ | PROT_WRITE, MAP_PRIVATE, format_fd, 0);
-    in_json = parse_json(format_in);
+    // in_json = parse_json(format_in);
     if (in_json == NULL)
     {
       PFATAL("Unable to parse '%s'", queue_cur->format_file);
     }
-    orig_json = parse_json(format_in);
+    // orig_json = parse_json(format_in);
     close(format_fd);
   }
 
@@ -5606,7 +5647,7 @@ skip_bitflip:
       if (!could_be_bitflip(r)) {
 
         stage_cur_val = j;
-        out_buf[i] = orig + j;
+        out_buf[i] = orig + j;  //no change of file format
 
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
@@ -5618,7 +5659,7 @@ skip_bitflip:
       if (!could_be_bitflip(r)) {
 
         stage_cur_val = -j;
-        out_buf[i] = orig - j;
+        out_buf[i] = orig - j; //no change of file format
 
         if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
         stage_cur++;
@@ -5863,7 +5904,7 @@ skip_arith:
       }
 
       stage_cur_val = interesting_8[j];
-      out_buf[i] = interesting_8[j];
+      out_buf[i] = interesting_8[j];  //no change of file format
 
       if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
@@ -6064,7 +6105,7 @@ skip_interest:
       }
 
       last_len = extras[j].len;
-      memcpy(out_buf + i, extras[j].data, last_len);
+      memcpy(out_buf + i, extras[j].data, last_len);  //no change of file format
 
       if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
@@ -6110,6 +6151,8 @@ skip_interest:
       /* Copy tail */
       memcpy(ex_tmp + i + extras[j].len, out_buf + i, len - i);
 
+      /* Update format file */
+
       if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len)) {
         ck_free(ex_tmp);
         goto abandon_entry;
@@ -6120,7 +6163,7 @@ skip_interest:
     }
 
     /* Copy head */
-    ex_tmp[i] = out_buf[i];
+    ex_tmp[i] = out_buf[i];  
 
   }
 
@@ -6164,7 +6207,7 @@ skip_user_extras:
       }
 
       last_len = a_extras[j].len;
-      memcpy(out_buf + i, a_extras[j].data, last_len);
+      memcpy(out_buf + i, a_extras[j].data, last_len);  //no change of file format
 
       if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
 
@@ -6435,6 +6478,8 @@ havoc_stage:
                     temp_len - del_from - del_len);
 
             temp_len -= del_len;
+
+            /* Update format file */
 
             break;
 

@@ -9,18 +9,30 @@
 #include <stdio.h>
 #include "cJSON.h"
 
+#define CHUNK_START(chunk) ((cJSON *)chunk)->child->valueint
+#define CHUNK_END(chunk) ((cJSON *)chunk)->child->next->valueint
+
 cJSON* parse_json(const uint8_t* format_file) {
     cJSON* cjson_head;
-    int32_t fd, len;
+    int32_t fd;
     uint8_t *in_buf;
+    struct stat st;
+    int32_t n;
+    if(lstat(format_file, &st)) {
+        printf("lstat error\n");
+        exit(0);
+    }
     fd = open(format_file, O_RDONLY);
-    len = 300;
-    in_buf = mmap(0, len, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    in_buf = malloc(st.st_size);
+    n = read(fd, in_buf, st.st_size);
     cjson_head = cJSON_Parse(in_buf);
     if(cjson_head == NULL) {
         printf("parse fail\n");
         return NULL;
     }
+    close(fd);
+    free(in_buf);
+    printf("%d, %d;", CHUNK_START(cjson_head->child), CHUNK_END(cjson_head->child));
     return cjson_head;
 }
 
@@ -33,7 +45,7 @@ void insert_chunk(uint8_t* buf, cJSON* cjson_head, uint32_t chunk_index, uint32_
         chunk_choose = chunk_choose->next;
     }
 
-    clone_len = chunk_choose->child->next->valueint - chunk_choose->child->valueint + 1;
+    clone_len = CHUNK_END(chunk_choose) - CHUNK_START(chunk_choose) + 1;
     uint8_t* new_buf;
     new_buf = malloc(strlen(buf) + clone_len);
 
@@ -44,24 +56,25 @@ void insert_chunk(uint8_t* buf, cJSON* cjson_head, uint32_t chunk_index, uint32_
         for (int i = 0; i < insert_index - 1; i++) {
             chunk_insert = chunk_insert->next;
         }
-        clone_to = chunk_insert->child->next->valueint + 1;
+        clone_to = CHUNK_END(chunk_insert) + 1;
     }
     memcpy(new_buf, buf, clone_to);
-    memcpy(new_buf + clone_to, buf + chunk_choose->child->valueint, clone_len);
+    memcpy(new_buf + clone_to, buf + CHUNK_START(chunk_choose), clone_len);
     memcpy(new_buf + clone_to + clone_len, buf + clone_to, strlen(buf) - clone_to);
 
     cJSON* chunk_dup = cJSON_Duplicate(chunk_choose, 1);
     cJSON_InsertItemInArray(cjson_head, insert_index, chunk_dup);
 
     cJSON_SetIntValue(chunk_dup->child, clone_to);
-    cJSON_SetIntValue(chunk_dup->child->next, chunk_dup->child->valueint + clone_len - 1);
+    cJSON_SetIntValue(chunk_dup->child->next, CHUNK_START(chunk_dup) + clone_len - 1);
     cjson_iter = chunk_dup->next;
     while(cjson_iter) {
-        cJSON_SetIntValue(cjson_iter->child, cjson_iter->child->valueint + clone_len);
-        cJSON_SetIntValue(cjson_iter->child->next, cjson_iter->child->next->valueint + clone_len);
+        cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) + clone_len);
+        cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) + clone_len);
         cjson_iter = cjson_iter->next;
     }
 
+    printf(new_buf);
     // cJSON_Delete(cjson_head);
 }
 
@@ -72,17 +85,17 @@ void delete_chunk(uint8_t* buf, cJSON* cjson_head, uint32_t delete_index) {
     for(int i = 0; i < delete_index; i++) {
         chunk_delete = chunk_delete->next;
     }
-    uint32_t delete_len = chunk_delete->child->next->valueint - chunk_delete->child->valueint + 1;
+    uint32_t delete_len = CHUNK_END(chunk_delete) - CHUNK_START(chunk_delete) + 1;
     uint8_t* new_buf;
     new_buf = malloc(strlen(buf) - delete_len);
-    clone_to = chunk_delete->child->valueint;
+    clone_to = CHUNK_START(chunk_delete);
     memcpy(new_buf, buf, clone_to);
     memcpy(new_buf + clone_to, buf + clone_to + delete_len, strlen(buf) - clone_to - delete_len);
 
     cjson_iter = chunk_delete->next;
     while (cjson_iter) {
-        cJSON_SetIntValue(cjson_iter->child, cjson_iter->child->valueint - delete_len);
-        cJSON_SetIntValue(cjson_iter->child->next, cjson_iter->child->next->valueint - delete_len);
+        cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) - delete_len);
+        cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) - delete_len);
         cjson_iter = cjson_iter->next;
     }
 
