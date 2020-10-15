@@ -3184,10 +3184,11 @@ static void write_crash_readme(void) {
    save or queue the input test case for further analysis if so. Returns 1 if
    entry is saved, 0 otherwise. */
 
-static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
+static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault, cJSON* json) {
 
   u8  *fn = "";
   u8  *format_file = "";
+  u8* format_mem;
   u8  hnb;
   s32 fd;
   u8  keeping = 0, res;
@@ -3235,6 +3236,13 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (fd < 0) PFATAL("Unable to create '%s'", fn);
     ck_write(fd, mem, len, fn);
+    close(fd);
+
+    format_mem = cJSON_Print(json);
+    fd = open(format_file, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd < 0)
+      PFATAL("Unable to create '%s'", format_file);
+    ck_write(fd, format_mem, strlen(format_mem), format_file);
     close(fd);
 
     keeping = 1;
@@ -3371,10 +3379,6 @@ keep_as_crash:
 
   return keeping;
 
-}
-
-static u8 save_format_if_interesting() {
-  
 }
 
 /* When resuming, try to find the queue position to start from. This makes sense
@@ -4563,6 +4567,9 @@ cJSON *parse_json(const u8 *format_file) {
   fd = open(format_file, O_RDONLY);
   in_buf = ck_alloc_nozero(st.st_size);
   n = read(fd, in_buf, st.st_size);
+  if(n < st.st_size) {
+    PFATAL("Short read '%s'", format_file);
+  }
   cjson_head = cJSON_Parse(in_buf);
   if (cjson_head == NULL)
   {
@@ -4576,11 +4583,82 @@ cJSON *parse_json(const u8 *format_file) {
 #define CHUNK_START(chunk) ((cJSON *)chunk)->child->valueint
 #define CHUNK_END(chunk) ((cJSON *)chunk)->child->next->valueint
 
-/* Trim all new test cases to save cycles when doing deterministic checks. The
+static void delete_block(cJSON* cjson_head, u32 delete_from, u32 delete_len) {
+  cJSON *cjson_iter;
+  cJSON *cjson_start;
+  cJSON *cjson_end;
+  cJSON *cjson_temp;
+  cjson_iter = cjson_head->child;
+  cjson_start = cjson_iter;
+  while (cjson_iter != NULL && CHUNK_START(cjson_iter) < delete_from)
+  {
+    cjson_start = cjson_iter;
+    cjson_iter = cjson_iter->next;
+  }
+  cjson_end = cjson_iter;
+  while (cjson_iter != NULL && CHUNK_START(cjson_iter) < delete_from + delete_len)
+  {
+    cjson_end = cjson_iter;
+    cjson_iter = cjson_iter->next;
+  }
+  if (cJSON_Compare(cjson_start, cjson_end, 1))
+  {
+    cJSON_SetIntValue(cjson_start->child->next, CHUNK_END(cjson_start) - delete_len);
+    cjson_iter = cjson_start->next;
+    while (cjson_iter)
+    {
+      cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) - delete_len);
+      cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) - delete_len);
+      cjson_iter = cjson_iter->next;
+    }
+  }
+  else
+  {
+    cjson_iter = cjson_start->next;
+    while (!cJSON_Compare(cjson_iter, cjson_end, 1))
+    {
+      cjson_temp = cjson_iter->next;
+      cJSON_DetachItemViaPointer(cjson_head, cjson_iter);
+      cjson_iter = cjson_temp;
+    }
+    cJSON_DetachItemViaPointer(cjson_head, cjson_end);
+    cJSON_SetIntValue(cjson_start->child, CHUNK_END(cjson_end) - delete_len);
+    cjson_iter = cjson_start->next;
+    while (cjson_iter)
+    {
+      cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) - delete_len);
+      cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) - delete_len);
+    }
+    if (CHUNK_START(cjson_start) == CHUNK_END(cjson_end))
+    {
+      cJSON_DetachItemViaPointer(cjson_head, cjson_start);
+    }
+  }
+}
+
+static void insert_block(cJSON *cjson_head, u32 insert_to, u32 insert_len) {
+  cJSON *json_iter;
+  json_iter = cjson_head->child;
+  while (json_iter->next != NULL && CHUNK_START(json_iter->next) < insert_to)
+  {
+    json_iter = json_iter->next;
+  }
+  cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) + insert_len);
+  json_iter = json_iter->next;
+  while (json_iter)
+  {
+    cJSON_SetIntValue(json_iter->child, CHUNK_START(json_iter) + insert_len);
+    cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) + insert_len);
+    json_iter = json_iter->next;
+  }
+}
+
+    /* Trim all new test cases to save cycles when doing deterministic checks. The
    trimmer uses power-of-two increments somewhere between 1/16 and 1/1024 of
    file size, to keep the stage short and sweet. */
 
-static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
+    static u8 trim_case(char **argv, struct queue_entry *q, u8 *in_buf)
+{
 
   static u8 tmp[64];
   static u8 clean_trace[MAP_SIZE];
@@ -4590,9 +4668,6 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
   u32 remove_len;
   u32 len_p2;
   cJSON* cjson_head;
-  cJSON* cjson_iter;
-  cJSON* cjson_start;
-  cJSON* cjson_end;
   
 
   /* Although the trimmer will be less useful when variable behavior is
@@ -4655,16 +4730,7 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
 
         /* TODO: need to update the format file */
         cjson_head = parse_json(q->format_file);
-        cjson_iter = cjson_head->child;
-        while (cjson_iter != NULL && CHUNK_START(cjson_iter) < remove_pos) {
-          cjson_start = cjson_iter;
-          cjson_iter = cjson_iter->next;
-        }
-        while (cjson_iter != NULL && CHUNK_END(cjson_iter) > remove_pos + trim_avail) {
-          cjson_end = cjson_iter;
-          cjson_iter = cjson_iter->next;
-        }
-        
+        delete_block(cjson_head, remove_pos, trim_avail);
 
           /* Let's save a clean trace, which will be needed by
            update_bitmap_score once we're done with the trimming stuff. */
@@ -4695,6 +4761,7 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
   if (needs_write) {
 
     s32 fd;
+    u8 *cjson_str;
 
     unlink(q->fname); /* ignore errors */
 
@@ -4703,6 +4770,17 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
     if (fd < 0) PFATAL("Unable to create '%s'", q->fname);
 
     ck_write(fd, in_buf, q->len, q->fname);
+    close(fd);
+
+    unlink(q->format_file); /* ignore errors */
+
+    fd = open(q->format_file, O_WRONLY | O_CREAT | O_EXCL, 0600);
+
+    if (fd < 0) PFATAL("Unable to create '%s'", q->fname);
+
+    cjson_str = cJSON_Print(cjson_head);
+
+    ck_write(fd, cjson_str, strlen(cjson_str), q->format_file);
     close(fd);
 
     memcpy(trace_bits, clean_trace, MAP_SIZE);
@@ -4714,15 +4792,13 @@ abort_trimming:
 
   bytes_trim_out += q->len;
   return fault;
-
 }
-
 
 /* Write a modified test case, run program, process results. Handle
    error conditions, returning 1 if it's time to bail out. This is
    a helper function for fuzz_one(). */
 
-EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
+EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len, cJSON* json) {
 
   u8 fault;
 
@@ -4760,8 +4836,7 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
   }
 
   /* This handles FAULT_ERROR for us: */
-
-  queued_discovered += save_if_interesting(argv, out_buf, len, fault);
+  queued_discovered += save_if_interesting(argv, out_buf, len, fault, json);
 
   if (!(stage_cur % stats_update_freq) || stage_cur + 1 == stage_max)
     show_stats();
@@ -5070,6 +5145,77 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 
 }
 
+static u8* insert_chunk(u8 *buf, cJSON *cjson_head, u32 chunk_index, u32 insert_index) {
+  u32 clone_to, clone_len;
+  cJSON *cjson_iter;
+
+  cJSON *chunk_choose = cjson_head->child;
+  for (int i = 0; i < chunk_index; i++)
+  {
+    chunk_choose = chunk_choose->next;
+  }
+
+  clone_len = CHUNK_END(chunk_choose) - CHUNK_START(chunk_choose);
+  u8 *new_buf;
+  new_buf = ck_alloc_nozero(strlen(buf) + clone_len);
+  if (insert_index == 0)
+  {
+    clone_to = 0;
+  }
+  else
+  {
+    cJSON *chunk_insert = cjson_head->child;
+    for (int i = 0; i < insert_index - 1; i++)
+    {
+      chunk_insert = chunk_insert->next;
+    }
+    clone_to = CHUNK_END(chunk_insert);
+  }
+  memcpy(new_buf, buf, clone_to);
+  memcpy(new_buf + clone_to, buf + CHUNK_START(chunk_choose), clone_len);
+  memcpy(new_buf + clone_to + clone_len, buf + clone_to, strlen(buf) - clone_to);
+
+  cJSON *chunk_dup = cJSON_Duplicate(chunk_choose, 1);
+  cJSON_InsertItemInArray(cjson_head, insert_index, chunk_dup);
+
+  cJSON_SetIntValue(chunk_dup->child, clone_to);
+  cJSON_SetIntValue(chunk_dup->child->next, CHUNK_START(chunk_dup) + clone_len);
+  cjson_iter = chunk_dup->next;
+  while (cjson_iter)
+  {
+    cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) + clone_len);
+    cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) + clone_len);
+    cjson_iter = cjson_iter->next;
+  }
+  return new_buf;
+}
+
+static u8* delete_chunk(uint8_t *buf, cJSON *cjson_head, uint32_t delete_index) {
+  uint32_t clone_to;
+  cJSON *cjson_iter;
+  cJSON *chunk_delete = cjson_head->child;
+  for (int i = 0; i < delete_index; i++)
+  {
+    chunk_delete = chunk_delete->next;
+  }
+  uint32_t delete_len = CHUNK_END(chunk_delete) - CHUNK_START(chunk_delete);
+  uint8_t *new_buf;
+  new_buf = ck_alloc_nozero(strlen(buf) - delete_len);
+  clone_to = CHUNK_START(chunk_delete);
+  memcpy(new_buf, buf, clone_to);
+  memcpy(new_buf + clone_to, buf + clone_to + delete_len, strlen(buf) - clone_to - delete_len);
+
+  cjson_iter = chunk_delete->next;
+  while (cjson_iter)
+  {
+    cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) - delete_len);
+    cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) - delete_len);
+    cjson_iter = cjson_iter->next;
+  }
+
+  cJSON_DetachItemViaPointer(cjson_head, chunk_delete);
+  return new_buf;
+}
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
    skipped or bailed out. */
@@ -5077,10 +5223,8 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 static u8 fuzz_one(char** argv) {
 
   s32 len, fd, temp_len, i, j;
-  s32 format_len;
   u8  *in_buf, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
-  u8  *format_in;
-  cJSON *in_json, *out_json, *orig_json, *json_iter;
+  cJSON *in_json, *out_json, *json_iter;
   s32 format_fd;
   u64 havoc_queued,  orig_hit_cnt, new_hit_cnt;
   u32 splice_cycle = 0, perf_score = 100, orig_perf, prev_cksum, eff_cnt = 1;
@@ -5214,23 +5358,14 @@ static u8 fuzz_one(char** argv) {
 
   memcpy(out_buf, in_buf, len);
 
-  if (queue_cur->format_file != NULL && strcmp(queue_cur->format_file, "") != 0)
-  {
-    format_fd = open(queue_cur->format_file, O_RDONLY);
-    if (fd < 0)
-      PFATAL("Unable to open '%s'", queue_cur->format_file);
-    /* TODO: need to fix */
-    format_len = 300;
+  format_fd = open(queue_cur->format_file, O_RDONLY);
+  if (fd < 0)
+    PFATAL("Unable to open '%s'", queue_cur->format_file);
+  in_json = parse_json(queue_cur->format_file);
+  out_json = cJSON_Duplicate(in_json, 1);
+  // orig_json = parse_json(format_in);
+  close(format_fd);
 
-    format_in = mmap(0, format_len, PROT_READ | PROT_WRITE, MAP_PRIVATE, format_fd, 0);
-    // in_json = parse_json(format_in);
-    if (in_json == NULL)
-    {
-      PFATAL("Unable to parse '%s'", queue_cur->format_file);
-    }
-    // orig_json = parse_json(format_in);
-    close(format_fd);
-  }
 
   /*********************
    * PERFORMANCE SCORE *
@@ -5258,19 +5393,25 @@ static u8 fuzz_one(char** argv) {
    * ******************************************/
   if(in_json != NULL) {
     stage_name = "chunk_insert";
-    json_iter = in_json->child;
-    while (json_iter)
-    {
+    stage_max = cJSON_GetArraySize(in_json);
+    u32 i;
+    for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
       /* insert chunk */
-      json_iter = json_iter->next;
+      for(i = 0; i <= stage_max; i++) {
+        out_buf = insert_chunk(out_buf, out_json, stage_cur, i);
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
+        memcpy(out_buf, in_buf, len);
+        out_json = cJSON_Duplicate(in_json, 1);
+      }
     }
 
     stage_name = "chunk_delete";
-    json_iter = in_json->child;
-    while (json_iter)
-    {
+    for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
       /* delete chunk */
-      json_iter = json_iter->next;
+      out_buf = delete_chunk(out_buf, out_json, stage_cur);
+      if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
+      memcpy(out_buf, in_buf, len);
+      out_json = cJSON_Duplicate(in_json, 1);
     }
 
     stage_name = "chunk_exchange";
@@ -5304,7 +5445,7 @@ static u8 fuzz_one(char** argv) {
 
     FLIP_BIT(out_buf, stage_cur);
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
 
     FLIP_BIT(out_buf, stage_cur);
 
@@ -5397,7 +5538,7 @@ static u8 fuzz_one(char** argv) {
     FLIP_BIT(out_buf, stage_cur);
     FLIP_BIT(out_buf, stage_cur + 1);
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
 
     FLIP_BIT(out_buf, stage_cur);
     FLIP_BIT(out_buf, stage_cur + 1);
@@ -5426,7 +5567,7 @@ static u8 fuzz_one(char** argv) {
     FLIP_BIT(out_buf, stage_cur + 2);
     FLIP_BIT(out_buf, stage_cur + 3);
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
 
     FLIP_BIT(out_buf, stage_cur);
     FLIP_BIT(out_buf, stage_cur + 1);
@@ -5478,7 +5619,7 @@ static u8 fuzz_one(char** argv) {
 
     out_buf[stage_cur] ^= 0xFF;
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
 
     /* We also use this stage to pull off a simple trick: we identify
        bytes that seem to have no effect on the current execution path
@@ -5556,7 +5697,7 @@ static u8 fuzz_one(char** argv) {
 
     *(u16*)(out_buf + i) ^= 0xFFFF;
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
     stage_cur++;
 
     *(u16*)(out_buf + i) ^= 0xFFFF;
@@ -5593,7 +5734,7 @@ static u8 fuzz_one(char** argv) {
 
     *(u32*)(out_buf + i) ^= 0xFFFFFFFF;
 
-    if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
     stage_cur++;
 
     *(u32*)(out_buf + i) ^= 0xFFFFFFFF;
@@ -5649,7 +5790,7 @@ skip_bitflip:
         stage_cur_val = j;
         out_buf[i] = orig + j;  //no change of file format
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -5661,7 +5802,7 @@ skip_bitflip:
         stage_cur_val = -j;
         out_buf[i] = orig - j; //no change of file format
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -5720,7 +5861,7 @@ skip_bitflip:
         stage_cur_val = j;
         *(u16*)(out_buf + i) = orig + j;
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
  
       } else stage_max--;
@@ -5730,7 +5871,7 @@ skip_bitflip:
         stage_cur_val = -j;
         *(u16*)(out_buf + i) = orig - j;
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -5745,7 +5886,7 @@ skip_bitflip:
         stage_cur_val = j;
         *(u16*)(out_buf + i) = SWAP16(SWAP16(orig) + j);
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -5755,7 +5896,7 @@ skip_bitflip:
         stage_cur_val = -j;
         *(u16*)(out_buf + i) = SWAP16(SWAP16(orig) - j);
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -5813,7 +5954,7 @@ skip_bitflip:
         stage_cur_val = j;
         *(u32*)(out_buf + i) = orig + j;
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -5823,7 +5964,7 @@ skip_bitflip:
         stage_cur_val = -j;
         *(u32*)(out_buf + i) = orig - j;
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -5837,7 +5978,7 @@ skip_bitflip:
         stage_cur_val = j;
         *(u32*)(out_buf + i) = SWAP32(SWAP32(orig) + j);
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -5847,7 +5988,7 @@ skip_bitflip:
         stage_cur_val = -j;
         *(u32*)(out_buf + i) = SWAP32(SWAP32(orig) - j);
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -5906,7 +6047,7 @@ skip_arith:
       stage_cur_val = interesting_8[j];
       out_buf[i] = interesting_8[j];  //no change of file format
 
-      if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
 
       out_buf[i] = orig;
       stage_cur++;
@@ -5959,7 +6100,7 @@ skip_arith:
 
         *(u16*)(out_buf + i) = interesting_16[j];
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -5972,7 +6113,7 @@ skip_arith:
         stage_val_type = STAGE_VAL_BE;
 
         *(u16*)(out_buf + i) = SWAP16(interesting_16[j]);
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -6028,7 +6169,7 @@ skip_arith:
 
         *(u32*)(out_buf + i) = interesting_32[j];
 
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -6041,7 +6182,7 @@ skip_arith:
         stage_val_type = STAGE_VAL_BE;
 
         *(u32*)(out_buf + i) = SWAP32(interesting_32[j]);
-        if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
         stage_cur++;
 
       } else stage_max--;
@@ -6107,7 +6248,7 @@ skip_interest:
       last_len = extras[j].len;
       memcpy(out_buf + i, extras[j].data, last_len);  //no change of file format
 
-      if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
 
       stage_cur++;
 
@@ -6133,18 +6274,60 @@ skip_interest:
   orig_hit_cnt = new_hit_cnt;
 
   ex_tmp = ck_alloc(len + MAX_DICT_FILE);
+  
+  json_iter = out_json->child;
+  // for (i = 0; i <= len; i++) {
 
-  for (i = 0; i <= len; i++) {
+  //   stage_cur_byte = i;
 
-    stage_cur_byte = i;
+  //   for (j = 0; j < extras_cnt; j++) {
 
-    for (j = 0; j < extras_cnt; j++) {
+  //     if (len + extras[j].len > MAX_FILE) {
+  //       stage_max--; 
+  //       continue;
+  //     }
 
-      if (len + extras[j].len > MAX_FILE) {
-        stage_max--; 
-        continue;
-      }
+  //     /* Insert token */
+  //     memcpy(ex_tmp + i, extras[j].data, extras[j].len);
 
+  //     /* Copy tail */
+  //     memcpy(ex_tmp + i + extras[j].len, out_buf + i, len - i);
+
+  //     /* Update format file */
+  //     if (i <= CHUNK_END(json_iter)) {
+
+  //     }
+
+  //     if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len, out_json)) {
+  //       ck_free(ex_tmp);
+  //       goto abandon_entry;
+  //     }
+
+  //     stage_cur++;
+
+  //   }
+
+  //   /* Copy head */
+  //   ex_tmp[i] = out_buf[i];  
+
+  // }
+
+  for (j = 0; j < extras_cnt; j++) {
+    if (len + extras[j].len > MAX_FILE) {
+      stage_max--;
+      continue;
+    }
+
+    json_iter = out_json->child;
+    while(json_iter) {
+      cJSON_SetIntValue(json_iter->child, CHUNK_START(json_iter) + extras[j].len);
+      cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) + extras[j].len);
+      json_iter = json_iter->next;
+    }
+    cJSON_SetIntValue(out_json->child->child, 0);
+
+    for (i = 0; i <= len; i++) {
+      stage_cur_byte = i;
       /* Insert token */
       memcpy(ex_tmp + i, extras[j].data, extras[j].len);
 
@@ -6152,20 +6335,24 @@ skip_interest:
       memcpy(ex_tmp + i + extras[j].len, out_buf + i, len - i);
 
       /* Update format file */
-
-      if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len)) {
+      if (i > CHUNK_END(json_iter)) {
+        cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) - extras[j].len);
+        json_iter = json_iter->next;
+        cJSON_SetIntValue(json_iter->child, CHUNK_START(json_iter) - extras[j].len);
+      }
+      if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len, out_json)) {
         ck_free(ex_tmp);
         goto abandon_entry;
       }
 
       stage_cur++;
 
+      /* Copy head */
+      ex_tmp[i] = out_buf[i];
     }
-
-    /* Copy head */
-    ex_tmp[i] = out_buf[i];  
-
+    cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) - extras[j].len);
   }
+  out_json = cJSON_Duplicate(in_json, 1);
 
   ck_free(ex_tmp);
 
@@ -6209,7 +6396,7 @@ skip_user_extras:
       last_len = a_extras[j].len;
       memcpy(out_buf + i, a_extras[j].data, last_len);  //no change of file format
 
-      if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
 
       stage_cur++;
 
@@ -6480,7 +6667,7 @@ havoc_stage:
             temp_len -= del_len;
 
             /* Update format file */
-
+            delete_block(out_json, del_from, del_len);
             break;
 
           }
@@ -6530,6 +6717,9 @@ havoc_stage:
             ck_free(out_buf);
             out_buf = new_buf;
             temp_len += clone_len;
+
+            /* Update format file */
+            insert_block(out_json, clone_from, clone_len);
 
           }
 
@@ -6649,6 +6839,9 @@ havoc_stage:
             out_buf   = new_buf;
             temp_len += extra_len;
 
+            /* Update format file */
+            insert_block(out_json, insert_at, extra_len);
+
             break;
 
           }
@@ -6657,7 +6850,7 @@ havoc_stage:
 
     }
 
-    if (common_fuzz_stuff(argv, out_buf, temp_len))
+    if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
       goto abandon_entry;
 
     /* out_buf might have been mangled a bit, so let's restore it to its
@@ -6666,6 +6859,7 @@ havoc_stage:
     if (temp_len < len) out_buf = ck_realloc(out_buf, len);
     temp_len = len;
     memcpy(out_buf, in_buf, len);
+    out_json = cJSON_Duplicate(in_json, 1);
 
     /* If we're finding new stuff, let's run for a bit longer, limits
        permitting. */
@@ -6713,6 +6907,8 @@ retry_splicing:
     u32 tid, split_at;
     u8* new_buf;
     s32 f_diff, l_diff;
+    cJSON* target_json;
+    cJSON* target_iter;
 
     /* First of all, if we've modified in_buf for havoc, let's clean that
        up... */
@@ -6754,6 +6950,11 @@ retry_splicing:
 
     close(fd);
 
+    /* Parse the format file of the testcase */
+
+    target_json = parse_json(target->format_file);
+
+
     /* Find a suitable splicing location, somewhere between the first and
        the last differing byte. Bail out if the difference is just a single
        byte or so. */
@@ -6778,6 +6979,19 @@ retry_splicing:
     ck_free(out_buf);
     out_buf = ck_alloc_nozero(len);
     memcpy(out_buf, in_buf, len);
+
+    /* Update the format file. */
+    out_json = parse_json(queue_cur->format_file);
+    json_iter = out_json->child;
+    while (CHUNK_END(json_iter) < split_at) {
+      json_iter = json_iter->next;
+    }
+    target_iter = target_json->child;
+    while (CHUNK_END(target_iter) < split_at) {
+      target_iter = target_iter->next;
+    }
+    cJSON_SetIntValue(json_iter->child->next, CHUNK_END(target_iter));
+    json_iter->next = target_iter->next;
 
     goto havoc_stage;
 
@@ -6840,6 +7054,8 @@ static void sync_fuzzers(char** argv) {
 
     s32 id_fd;
 
+    u8 *file_type;
+
     /* Skip dot files and our own output directory. */
 
     if (sd_ent->d_name[0] == '.' || !strcmp(sync_id, sd_ent->d_name)) continue;
@@ -6878,13 +7094,21 @@ static void sync_fuzzers(char** argv) {
 
     while ((qd_ent = readdir(qd))) {
 
-      u8* path;
-      s32 fd;
+      u8 *path, *format_path;
+      s32 fd, format_fd;
       struct stat st;
+      cJSON* json;
 
       if (qd_ent->d_name[0] == '.' ||
           sscanf(qd_ent->d_name, CASE_PREFIX "%06u", &syncing_case) != 1 || 
           syncing_case < min_accept) continue;
+
+      /* Skip .json file */
+      file_type = strrchr(qd_ent->d_name, '.');
+      if (file_type != NULL && strcmp(file_type, ".json") == 0)
+      {
+        continue;
+      }
 
       /* OK, sounds like a new one. Let's give it a try. */
 
@@ -6893,6 +7117,8 @@ static void sync_fuzzers(char** argv) {
 
       path = alloc_printf("%s/%s", qd_path, qd_ent->d_name);
 
+      format_path = alloc_printf("%s/%s.json", qd_path, qd_ent->d_name);
+
       /* Allow this to fail in case the other fuzzer is resuming or so... */
 
       fd = open(path, O_RDONLY);
@@ -6900,6 +7126,12 @@ static void sync_fuzzers(char** argv) {
       if (fd < 0) {
          ck_free(path);
          continue;
+      }
+
+      format_fd = open(format_path, O_RDONLY);
+      if(format_fd < 0) {
+        ck_free(path);
+        continue;
       }
 
       if (fstat(fd, &st)) PFATAL("fstat() failed");
@@ -6912,6 +7144,7 @@ static void sync_fuzzers(char** argv) {
         u8* mem = mmap(0, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 
         if (mem == MAP_FAILED) PFATAL("Unable to mmap '%s'", path);
+        json = parse_json(format_path);
 
         /* See what happens. We rely on save_if_interesting() to catch major
            errors and save the test case. */
@@ -6923,7 +7156,7 @@ static void sync_fuzzers(char** argv) {
         if (stop_soon) return;
 
         syncing_party = sd_ent->d_name;
-        queued_imported += save_if_interesting(argv, mem, st.st_size, fault);
+        queued_imported += save_if_interesting(argv, mem, st.st_size, fault, json);
         syncing_party = 0;
 
         munmap(mem, st.st_size);
