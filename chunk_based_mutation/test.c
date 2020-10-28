@@ -11,6 +11,8 @@
 
 #define CHUNK_START(chunk) ((cJSON *)chunk)->child->valueint
 #define CHUNK_END(chunk) ((cJSON *)chunk)->child->next->valueint
+#define CHUNK_ID_START(chunk) ((cJSON *)chunk)->child->next->next->child->valueint
+#define CHUNK_ID_END(chunk) ((cJSON *)chunk)->child->next->next->child->next->valueint
 
 cJSON* parse_json(const uint8_t* format_file) {
     cJSON* cjson_head;
@@ -110,7 +112,7 @@ uint8_t* exchange_chunk(uint8_t* buf, uint32_t len, cJSON* cjson_head, uint32_t 
     cJSON* cjson_aft;
     uint32_t temp;
     if(index1 == index2) {
-        return;
+        return buf;
     }
     if(index2 < index1) {
         temp = index1;
@@ -132,7 +134,7 @@ uint8_t* exchange_chunk(uint8_t* buf, uint32_t len, cJSON* cjson_head, uint32_t 
     cJSON_InsertItemInArray(cjson_head, index2, cjson_fro);
 
     uint8_t *new_buf;
-    new_buf = calloc(0, len);
+    new_buf = calloc(len, sizeof(char));
     memcpy(new_buf, buf, CHUNK_START(cjson_fro));
     memcpy(new_buf + CHUNK_START(cjson_fro), buf + CHUNK_START(cjson_aft), CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft));
     memcpy(new_buf + CHUNK_START(cjson_fro) + CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft), buf + CHUNK_END(cjson_fro), CHUNK_START(cjson_aft) - CHUNK_END(cjson_fro));
@@ -232,52 +234,48 @@ uint32_t chunk_total(cJSON* cjson_head) {
     return chunk_total;
 }
 
+void replace_chunk_id(uint8_t* buf, cJSON* cjson_head, uint32_t chunk_index, uint8_t* new_id, uint32_t len) {
+    cJSON* cjson_iter;
+    cjson_iter = cjson_head->child;
+    for(uint32_t i = 0; i < chunk_index; i++) {
+        cjson_iter = cjson_iter->next;
+    }
+    memcpy(buf + CHUNK_START(cjson_iter) + CHUNK_ID_START(cjson_iter), new_id, len);
+    cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(cjson_iter, "id"), "name"), new_id);
+}
+
 int main() {
     uint8_t *in_buf;
-    int32_t fd, len;
+    int32_t fd, len, n;
     uint32_t clone_from, clone_to, clone_len;
+    struct stat st;
+    lstat("input.txt", &st);
     fd = open("input.txt", O_RDONLY);
-    len = 22;
-    in_buf = calloc(0, len);
-    // in_buf = mmap(0, len, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-    read(fd, in_buf, len);
-    cJSON *cjson_head, *cjson_temp;
+    len = st.st_size;
+    in_buf = calloc(len, sizeof(char));
+    n = read(fd, in_buf, len);
+    cJSON *cjson_head, *cjson_iter;
 
-    cjson_head = parse_json("input.txt.json");
-    // cjson_temp = parse_json("input.txt.json");
-    cjson_temp = cJSON_Duplicate(cjson_head, 1);
+    cjson_head = parse_json("input.txt.json"); 
 
-    // printf(cJSON_Print(cjson_temp));
-    // printf("before insert: %d\n", cJSON_Compare(cjson_head->child, cjson_temp->child, 1));
-    // printf(cJSON_Print(cjson_head->child));
-
-    // in_buf = insert_chunk(in_buf, &len, cjson_head, 3, 4);
-    // in_buf = delete_chunk(in_buf, cjson_head, 4);
-
-    // printf("\n%d\n", cJSON_GetArraySize(cjson_head));
-
-    in_buf = exchange_chunk(in_buf, len, cjson_head, 0, 3);
-    printf(in_buf);
-    printf("\nlen = %d\n", len);
-    
-    write_to_file(cjson_head);
-
-    // printf("after insert: %d\n", cJSON_Compare(cjson_head->child, cjson_temp->child, 1));
-
-    // cJSON *cjson_start, *cjson_end, *cjson_time, *cjson_iter;
-    // cjson_start = cjson_temp->child;
-    // cjson_end = cjson_start->next->next->next;
-    // cjson_iter = cjson_start->next;
-    // while (!cJSON_Compare(cjson_iter, cjson_end, 1))
-    // {
-    //     cjson_time = cjson_iter->next;
-    //     cJSON_DetachItemViaPointer(cjson_temp, cjson_iter);
-    //     cjson_iter = cjson_time;
-    //     printf("lalal\n");
+    cjson_iter = cjson_head->child->next;
+    // while(cjson_iter) {
+    //     printf("marker: %s; id-start: %d; id-end: %d\n", cjson_iter->string, CHUNK_ID_START(cjson_iter), CHUNK_ID_END(cjson_iter));
+    //     cjson_iter = cjson_iter->next;
     // }
-    // cJSON_DetachItemViaPointer(cjson_temp, cjson_end);
-    // printf(cJSON_Print(cjson_temp));
 
-    // delete_chunk(in_buf, cjson_head, 0);
-    // write_to_file(cjson_head);
+    // in_buf = exchange_chunk(in_buf, len, cjson_head, 0, 3);
+    // printf("%s\n", in_buf);
+    // printf("len = %d, n = %d\n", len, n);
+
+    replace_chunk_id(in_buf, cjson_head, 3, "AAAA", 4);
+
+    printf("%d\n", cJSON_GetObjectItemCaseSensitive(cjson_iter, "end")->valueint);
+
+    printf("%s\n", cJSON_Print(cjson_head));
+    printf("%s\n", in_buf);
+
+    write_to_file(cjson_head);
+    close(fd);
+    free(in_buf);
 }

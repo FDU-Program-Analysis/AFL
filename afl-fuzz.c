@@ -4731,7 +4731,7 @@ static u8 trim_case(char **argv, struct queue_entry *q, u8 *in_buf, cJSON* in_js
         memmove(in_buf + remove_pos, in_buf + remove_pos + trim_avail, 
                 move_tail);
         /* TODO: need to update the format file */
-        if(remove_pos <= q->len - 1) {
+        if(remove_pos <= q->len + trim_avail - 1) {
           delete_block(in_json, remove_pos, trim_avail);
         }
 
@@ -5431,7 +5431,6 @@ static u8 fuzz_one(char** argv) {
 
 
   out_json = cJSON_Duplicate(in_json, 1);
-  // orig_json = parse_json(format_in);
 
 
   /*********************
@@ -5455,48 +5454,53 @@ static u8 fuzz_one(char** argv) {
 
   doing_det = 1;
 
-  /*********************************************
+      /*********************************************
    * CHUNK BASED MUTATION                      *
    * ******************************************/
-  if(in_json != NULL) {
-    stage_name = "chunk_insert";
-    stage_short = "chunk_in";
-    stage_max = cJSON_GetArraySize(in_json);
-    u32 i;
-    for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
-      /* insert chunk */
-      for(i = 0; i <= stage_max; i++) {
-        temp_len = len;
-        out_buf = insert_chunk(out_buf, &temp_len, out_json, stage_cur, i);
-        if (common_fuzz_stuff(argv, out_buf, temp_len, out_json)) goto abandon_entry;
-        memcpy(out_buf, in_buf, len);
-        out_json = cJSON_Duplicate(in_json, 1);
-      }
-    }
-
-    stage_name = "chunk_delete";
-    stage_short = "chunk_de";
-    for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
-      /* delete chunk */
+  stage_name = "chunk_insert";
+  stage_short = "chunk_in";
+  stage_max = cJSON_GetArraySize(in_json);
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
+    /* insert chunk */
+    for (i = 0; i <= stage_max; i++)
+    {
       temp_len = len;
-      out_buf = delete_chunk(out_buf, &temp_len, out_json, stage_cur);
-      if (common_fuzz_stuff(argv, out_buf, temp_len, out_json)) goto abandon_entry;
-      ck_free(out_buf);
-      out_buf = ck_alloc_nozero(len);
+      out_buf = insert_chunk(out_buf, &temp_len, out_json, stage_cur, i);
+      if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
+        goto abandon_entry;
       memcpy(out_buf, in_buf, len);
       out_json = cJSON_Duplicate(in_json, 1);
     }
+  }
 
-    stage_name = "chunk_exchange";
-    stage_short = "chunk_ex";
-    for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
-      /*exchange chunk*/
-      for(i = stage_cur + 1; i < stage_max; i++) {
-        out_buf = exchange_chunk(out_buf, len, out_json, stage_cur, i);
-        if (common_fuzz_stuff(argv, out_buf, temp_len, out_json)) goto abandon_entry;
-        memcpy(out_buf, in_buf, len);
-        out_json = cJSON_Duplicate(in_json, 1);
-      }
+  stage_name = "chunk_delete";
+  stage_short = "chunk_de";
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
+    /* delete chunk */
+    temp_len = len;
+    out_buf = delete_chunk(out_buf, &temp_len, out_json, stage_cur);
+    if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
+      goto abandon_entry;
+    ck_free(out_buf);
+    out_buf = ck_alloc_nozero(len);
+    memcpy(out_buf, in_buf, len);
+    out_json = cJSON_Duplicate(in_json, 1);
+  }
+
+  stage_name = "chunk_exchange";
+  stage_short = "chunk_ex";
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
+    /*exchange chunk*/
+    for (i = stage_cur + 1; i < stage_max; i++)
+    {
+      out_buf = exchange_chunk(out_buf, len, out_json, stage_cur, i);
+      if (common_fuzz_stuff(argv, out_buf, len, out_json))
+        goto abandon_entry;
+      memcpy(out_buf, in_buf, len);
+      out_json = cJSON_Duplicate(in_json, 1);
     }
   }
 
@@ -6282,7 +6286,6 @@ skip_arith:
   stage_cycles[STAGE_INTEREST32] += stage_max;
 
 skip_interest:
-
   /********************
    * DICTIONARY STUFF *
    ********************/
@@ -6508,6 +6511,52 @@ skip_extras:
    ****************/
 
 havoc_stage:
+  stage_name = "chunk_insert";
+  stage_short = "chunk_in";
+  stage_max = cJSON_GetArraySize(in_json);
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
+    /* insert chunk */
+    for (i = 0; i <= stage_max; i++)
+    {
+      temp_len = len;
+      out_buf = insert_chunk(out_buf, &temp_len, out_json, stage_cur, i);
+      if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
+        goto abandon_entry;
+      memcpy(out_buf, in_buf, len);
+      out_json = cJSON_Duplicate(in_json, 1);
+    }
+  }
+
+  stage_name = "chunk_delete";
+  stage_short = "chunk_de";
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
+    /* delete chunk */
+    temp_len = len;
+    out_buf = delete_chunk(out_buf, &temp_len, out_json, stage_cur);
+    if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
+      goto abandon_entry;
+    ck_free(out_buf);
+    out_buf = ck_alloc_nozero(len);
+    memcpy(out_buf, in_buf, len);
+    out_json = cJSON_Duplicate(in_json, 1);
+  }
+
+  stage_name = "chunk_exchange";
+  stage_short = "chunk_ex";
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  {
+    /*exchange chunk*/
+    for (i = stage_cur + 1; i < stage_max; i++)
+    {
+      out_buf = exchange_chunk(out_buf, len, out_json, stage_cur, i);
+      if (common_fuzz_stuff(argv, out_buf, len, out_json))
+        goto abandon_entry;
+      memcpy(out_buf, in_buf, len);
+      out_json = cJSON_Duplicate(in_json, 1);
+    }
+  }
 
   stage_cur_byte = -1;
 
@@ -6552,7 +6601,6 @@ havoc_stage:
     stage_cur_val = use_stacking;
  
     for (i = 0; i < use_stacking; i++) {
-
       switch (UR(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0))) {
 
         case 0:
@@ -7074,6 +7122,7 @@ retry_splicing:
     }
     cJSON_SetIntValue(json_iter->child->next, CHUNK_END(target_iter));
     json_iter->next = target_iter->next;
+    in_json = cJSON_Duplicate(out_json, 1);
 
     goto havoc_stage;
 
@@ -8485,7 +8534,6 @@ int main(int argc, char** argv) {
   setup_dirs_fds();
   read_testcases();
   load_auto();
-
   pivot_inputs();
 
   if (extras_dir) load_extras(extras_dir);

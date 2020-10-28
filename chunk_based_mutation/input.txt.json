@@ -1,18 +1,38 @@
 {
-    "marker1": {
+    "marker4": {
         "start": 0,
-        "end": 4
+        "end": 8,
+        "id": {
+            "start": 0,
+            "end": 4,
+            "name": "XXXX"
+        }
     },
     "marker2": {
-        "start": 4,
-        "end": 9
+        "start": 8,
+        "end": 16,
+        "id": {
+            "start": 0,
+            "end": 4,
+            "name": "YYYY"
+        }
     },
     "marker3": {
-        "start": 9,
-        "end": 16
-    },
-    "marker4": {
         "start": 16,
-        "end": 19
+        "end": 24,
+        "id": {
+            "start": 0,
+            "end": 4,
+            "name": "ZZZZ"
+        }
+    },
+    "marker1": {
+        "start": 24,
+        "end": 32,
+        "id": {
+            "start": 0,
+            "end": 4,
+            "name": "MMMM"
+        }
     }
 }
