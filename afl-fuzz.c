@@ -3204,6 +3204,10 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault, cJSON* 
     if (!(hnb = has_new_bits(virgin_bits))) {
       if (crash_mode) total_crashes++;
       return 0;
+    }
+
+    if(len == 0) {
+      return 0;
     }    
 
 #ifndef SIMPLE_FILES
@@ -4565,7 +4569,7 @@ cJSON *parse_json(const u8 *format_file) {
   s32 n;
   if (lstat(format_file, &st))
   {
-    PFATAL("Unable to access '%d'", fd);
+    PFATAL("Unable to access %s\n", format_file);
   }
   fd = open(format_file, O_RDONLY);
   in_buf = ck_alloc_nozero(st.st_size);
@@ -4576,7 +4580,7 @@ cJSON *parse_json(const u8 *format_file) {
   cjson_head = cJSON_Parse(in_buf);
   if (cjson_head == NULL)
   {
-    PFATAL("Unable to parase '%s'", format_file);
+    PFATAL("Unable to parse '%s'", format_file);
   }
   close(fd);
   ck_free(in_buf);
@@ -4585,6 +4589,8 @@ cJSON *parse_json(const u8 *format_file) {
 
 #define CHUNK_START(chunk) ((cJSON *)chunk)->child->valueint
 #define CHUNK_END(chunk) ((cJSON *)chunk)->child->next->valueint
+#define CHUNK_ID_START(chunk) ((cJSON *)chunk)->child->next->next->child->valueint
+#define CHUNK_ID_END(chunk) ((cJSON *)chunk)->child->next->next->child->next->valueint
 
 static void delete_block(cJSON *cjson_head, uint32_t delete_from, uint32_t delete_len)
 {
@@ -4594,51 +4600,44 @@ static void delete_block(cJSON *cjson_head, uint32_t delete_from, uint32_t delet
   cJSON *cjson_temp;
   cjson_iter = cjson_head->child;
   cjson_start = cjson_iter;
-  while (cjson_iter != NULL && CHUNK_START(cjson_iter) < delete_from)
-  {
+  while (cjson_iter != NULL && CHUNK_START(cjson_iter) < delete_from) {
     cjson_start = cjson_iter;
     cjson_iter = cjson_iter->next;
   }
   cjson_end = cjson_start;
-  while (cjson_iter != NULL && CHUNK_START(cjson_iter) < delete_from + delete_len)
-  {
+  while (cjson_iter != NULL && CHUNK_START(cjson_iter) < delete_from + delete_len){
     cjson_end = cjson_iter;
     cjson_iter = cjson_iter->next;
   }
-  if (cJSON_Compare(cjson_start, cjson_end, 1))
-  {
+  if (cJSON_Compare(cjson_start, cjson_end, 1)) {
     cJSON_SetIntValue(cjson_start->child->next, CHUNK_END(cjson_start) - delete_len);
     cjson_iter = cjson_start->next;
-    while (cjson_iter)
-    {
+    while (cjson_iter) {
+      cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) - delete_len);
+      cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) - delete_len);
+      cjson_iter = cjson_iter->next;
+    }
+  }else {
+    cjson_iter = cjson_start->next;
+    while (!cJSON_Compare(cjson_iter, cjson_end, 1)) {
+      cjson_temp = cjson_iter->next;
+      cJSON_DetachItemViaPointer(cjson_head, cjson_iter);
+      cJSON_Delete(cjson_iter);
+      cjson_iter = cjson_temp;
+    }
+    cJSON_SetIntValue(cjson_start->child->next, CHUNK_END(cjson_end) - delete_len);
+    cJSON_DetachItemViaPointer(cjson_head, cjson_end);
+    cJSON_Delete(cjson_end);
+    cjson_iter = cjson_start->next;
+    while (cjson_iter) {
       cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) - delete_len);
       cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) - delete_len);
       cjson_iter = cjson_iter->next;
     }
   }
-  else
-  {
-    cjson_iter = cjson_start->next;
-    while (!cJSON_Compare(cjson_iter, cjson_end, 1))
-    {
-      cjson_temp = cjson_iter->next;
-      cJSON_DetachItemViaPointer(cjson_head, cjson_iter);
-      cjson_iter = cjson_temp;
-    }
-
-    cJSON_DetachItemViaPointer(cjson_head, cjson_end);
-    cJSON_SetIntValue(cjson_start->child->next, CHUNK_END(cjson_end) - delete_len);
-    cjson_iter = cjson_start->next;
-    while (cjson_iter)
-    {
-      cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) - delete_len);
-      cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) - delete_len);
-      cjson_iter = cjson_iter->next;
-    }
-    if (CHUNK_START(cjson_start) == CHUNK_END(cjson_start))
-    {
-      cJSON_DetachItemViaPointer(cjson_head, cjson_start);
-    }
+  if (CHUNK_START(cjson_start) == CHUNK_END(cjson_start)) {
+    cJSON_DetachItemViaPointer(cjson_head, cjson_start);
+    cJSON_Delete(cjson_start);
   }
 }
 
@@ -5146,29 +5145,29 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
 
 }
 
-u8 *insert_chunk(u8 *buf, u32 *len, cJSON *cjson_head, u32 chunk_index, u32 insert_index)
-{
+u8 *insert_chunk(u8 *buf, u32 *len, cJSON *cjson_head, u32 chunk_index, u32 insert_index) {
   u32 clone_to, clone_len;
   cJSON *cjson_iter;
 
   cJSON *chunk_choose = cjson_head->child;
-  for (u8 i = 0; i < chunk_index; i++)
-  {
+  for (u8 i = 0; i < chunk_index; i++){
     chunk_choose = chunk_choose->next;
   }
 
   clone_len = CHUNK_END(chunk_choose) - CHUNK_START(chunk_choose);
+
+  if(clone_len == 0) {
+    cJSON_DetachItemFromArray(cjson_head, chunk_index);
+    return buf;
+  }
+
   u8 *new_buf;
   new_buf = ck_alloc_nozero(*len + clone_len);
-  if (insert_index == 0)
-  {
+  if (insert_index == 0){
     clone_to = 0;
-  }
-  else
-  {
+  }else {
     cJSON *chunk_insert = cjson_head->child;
-    for (u8 i = 0; i < insert_index - 1; i++)
-    {
+    for (u8 i = 0; i < insert_index - 1; i++) {
       chunk_insert = chunk_insert->next;
     }
     clone_to = CHUNK_END(chunk_insert);
@@ -5181,12 +5180,10 @@ u8 *insert_chunk(u8 *buf, u32 *len, cJSON *cjson_head, u32 chunk_index, u32 inse
 
   cJSON *chunk_dup = cJSON_Duplicate(chunk_choose, 1);
   cJSON_InsertItemInArray(cjson_head, insert_index, chunk_dup);
-
   cJSON_SetIntValue(chunk_dup->child, clone_to);
   cJSON_SetIntValue(chunk_dup->child->next, CHUNK_START(chunk_dup) + clone_len);
   cjson_iter = chunk_dup->next;
-  while (cjson_iter)
-  {
+  while (cjson_iter) {
     cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) + clone_len);
     cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) + clone_len);
     cjson_iter = cjson_iter->next;
@@ -5206,6 +5203,7 @@ u8 *delete_chunk(u8 *buf, u32 *len, cJSON *cjson_head, uint32_t delete_index)
     chunk_delete = chunk_delete->next;
   }
   u32 delete_len = CHUNK_END(chunk_delete) - CHUNK_START(chunk_delete);
+
   u8 *new_buf;
   new_buf = ck_alloc_nozero(*len - delete_len);
   clone_to = CHUNK_START(chunk_delete);
@@ -5223,63 +5221,83 @@ u8 *delete_chunk(u8 *buf, u32 *len, cJSON *cjson_head, uint32_t delete_index)
   }
 
   cJSON_DetachItemViaPointer(cjson_head, chunk_delete);
+  cJSON_Delete(chunk_delete);
 
   ck_free(buf);
   return new_buf;
 }
 
 u8* exchange_chunk(uint8_t* buf, u32 len, cJSON* cjson_head, u32 index1, u32 index2) {
-    cJSON* cjson_iter;
-    cJSON* cjson_fro;
-    cJSON* cjson_aft;
-    u32 temp;
-    if(index1 == index2) {
-        return buf;
-    }
-    if(index2 < index1) {
-        temp = index1;
-        index1 = index2;
-        index2 = temp;
-    }
-    cjson_fro = cjson_head->child;
-    for(u32 i = 0; i < index1; i++) {
-        cjson_fro = cjson_fro->next;
-    }
-    cjson_aft = cjson_fro;
-    for(u32 i = index1; i < index2; i++) {
-        cjson_aft = cjson_aft->next;
-    }
-    cJSON_DetachItemViaPointer(cjson_head, cjson_fro);
-    cJSON_DetachItemViaPointer(cjson_head, cjson_aft);
+  cJSON *cjson_iter;
+  cJSON *cjson_fro;
+  cJSON *cjson_aft;
+  u32 temp;
+  if (index1 == index2) {
+    return buf;
+  }
+  if(index2 < index1) {
+      temp = index1;
+      index1 = index2;
+      index2 = temp;
+  }
+  cjson_fro = cjson_head->child;
+  for(u32 i = 0; i < index1; i++) {
+      cjson_fro = cjson_fro->next;
+  }
+  cjson_aft = cjson_fro;
+  for(u32 i = index1; i < index2; i++) {
+      cjson_aft = cjson_aft->next;
+  }
+  cJSON_DetachItemViaPointer(cjson_head, cjson_fro);
+  cJSON_DetachItemViaPointer(cjson_head, cjson_aft);
 
-    cJSON_InsertItemInArray(cjson_head, index1, cjson_aft);
-    cJSON_InsertItemInArray(cjson_head, index2, cjson_fro);
+  cJSON_InsertItemInArray(cjson_head, index1, cjson_aft);
+  cJSON_InsertItemInArray(cjson_head, index2, cjson_fro);
 
-    u8 *new_buf;
-    new_buf = ck_alloc_nozero(len);
-    memcpy(new_buf, buf, CHUNK_START(cjson_fro));
-    memcpy(new_buf + CHUNK_START(cjson_fro), buf + CHUNK_START(cjson_aft), CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft));
-    memcpy(new_buf + CHUNK_START(cjson_fro) + CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft), buf + CHUNK_END(cjson_fro), CHUNK_START(cjson_aft) - CHUNK_END(cjson_fro));
-    memcpy(new_buf + CHUNK_START(cjson_fro) + CHUNK_END(cjson_aft) - CHUNK_END(cjson_fro), buf + CHUNK_START(cjson_fro), CHUNK_END(cjson_fro) - CHUNK_START(cjson_fro));
-    memcpy(new_buf + CHUNK_END(cjson_aft), buf + CHUNK_END(cjson_aft), len - CHUNK_END(cjson_aft));
-    u32 aft_end;
-    aft_end = CHUNK_END(cjson_aft);
-    cJSON_SetIntValue(cjson_aft->child->next, CHUNK_START(cjson_fro) + CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft));
-    cJSON_SetIntValue(cjson_aft->child, CHUNK_START(cjson_fro));
-    cjson_iter = cjson_aft->next;
-    u32 gap = CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft) - CHUNK_END(cjson_fro) + CHUNK_START(cjson_fro);
-    while(!cJSON_Compare(cjson_iter, cjson_fro, 1)) {
-        cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) + gap);
-        cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) + gap);
+  u8 *new_buf;
+  new_buf = ck_alloc_nozero(len);
+  memcpy(new_buf, buf, CHUNK_START(cjson_fro));
+  memcpy(new_buf + CHUNK_START(cjson_fro), buf + CHUNK_START(cjson_aft), CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft));
+  memcpy(new_buf + CHUNK_START(cjson_fro) + CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft), buf + CHUNK_END(cjson_fro), CHUNK_START(cjson_aft) - CHUNK_END(cjson_fro));
+  memcpy(new_buf + CHUNK_START(cjson_fro) + CHUNK_END(cjson_aft) - CHUNK_END(cjson_fro), buf + CHUNK_START(cjson_fro), CHUNK_END(cjson_fro) - CHUNK_START(cjson_fro));
+  memcpy(new_buf + CHUNK_END(cjson_aft), buf + CHUNK_END(cjson_aft), len - CHUNK_END(cjson_aft));
+  u32 aft_end;
+  aft_end = CHUNK_END(cjson_aft);
+  cJSON_SetIntValue(cjson_aft->child->next, CHUNK_START(cjson_fro) + CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft));
+  cJSON_SetIntValue(cjson_aft->child, CHUNK_START(cjson_fro));
+  cjson_iter = cjson_aft->next;
+  u32 gap = CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft) - CHUNK_END(cjson_fro) + CHUNK_START(cjson_fro);
+  while(!cJSON_Compare(cjson_iter, cjson_fro, 1)) {
+      cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) + gap);
+      cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) + gap);
+      cjson_iter = cjson_iter->next;
+  }
+  u32 fro_len;
+  fro_len = CHUNK_END(cjson_fro) - CHUNK_START(cjson_fro);
+  cJSON_SetIntValue(cjson_fro->child->next, aft_end);
+  cJSON_SetIntValue(cjson_fro->child, aft_end - fro_len);
+
+  ck_free(buf);
+  return new_buf;
+}
+
+void replace_chunk_id(uint8_t *buf, cJSON *cjson_head, uint32_t chunk_index, uint8_t *new_id, uint32_t len) {
+    cJSON *cjson_iter;
+    cjson_iter = cjson_head->child;
+    for (uint32_t i = 0; i < chunk_index; i++) {
         cjson_iter = cjson_iter->next;
     }
-    u32 fro_len;
-    fro_len = CHUNK_END(cjson_fro) - CHUNK_START(cjson_fro);
-    cJSON_SetIntValue(cjson_fro->child->next, aft_end);
-    cJSON_SetIntValue(cjson_fro->child, aft_end - fro_len);
-
-    ck_free(buf);
-    return new_buf;
+    if((CHUNK_START(cjson_iter) + CHUNK_ID_END(cjson_iter)) > CHUNK_END(cjson_iter)) {
+      return;
+    }
+    if((CHUNK_START(cjson_iter) + CHUNK_ID_START(cjson_iter)) > CHUNK_END(cjson_iter)) {
+      return;
+    }
+    if((CHUNK_START(cjson_iter) + CHUNK_ID_START(cjson_iter) + len) > CHUNK_END(cjson_iter)) {
+      return;
+    }
+    memcpy(buf + CHUNK_START(cjson_iter) + CHUNK_ID_START(cjson_iter), new_id, len);
+    cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(cjson_iter, "id"), "name"), new_id);
 }
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
@@ -5290,7 +5308,6 @@ static u8 fuzz_one(char** argv) {
   s32 len, fd, temp_len, i, j;
   u8  *in_buf, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
   cJSON *in_json, *out_json, *json_iter;
-  s32 format_fd;
   u64 havoc_queued,  orig_hit_cnt, new_hit_cnt;
   u32 splice_cycle = 0, perf_score = 100, orig_perf, prev_cksum, eff_cnt = 1;
 
@@ -5298,6 +5315,7 @@ static u8 fuzz_one(char** argv) {
 
   u8  a_collect[MAX_AUTO_EXTRA];
   u32 a_len = 0;
+  u32 chunk_num;
 
 #ifdef IGNORE_FINDS
 
@@ -5357,11 +5375,8 @@ static u8 fuzz_one(char** argv) {
 
   close(fd);
 
-  format_fd = open(queue_cur->format_file, O_RDONLY);
-  if (fd < 0)
-    PFATAL("Unable to open '%s'", queue_cur->format_file);
   in_json = parse_json(queue_cur->format_file);
-  close(format_fd);
+  out_json = cJSON_Duplicate(in_json, 1);
 
   /* We could mmap() out_buf as MAP_PRIVATE, but we end up clobbering every
      single byte anyway, so it wouldn't give us any performance or memory usage
@@ -5428,10 +5443,7 @@ static u8 fuzz_one(char** argv) {
   }
 
   memcpy(out_buf, in_buf, len);
-
-
   out_json = cJSON_Duplicate(in_json, 1);
-
 
   /*********************
    * PERFORMANCE SCORE *
@@ -5454,56 +5466,89 @@ static u8 fuzz_one(char** argv) {
 
   doing_det = 1;
 
-      /*********************************************
+  /*********************************************
    * CHUNK BASED MUTATION                      *
    * ******************************************/
-  stage_name = "chunk_insert";
-  stage_short = "chunk_in";
-  stage_max = cJSON_GetArraySize(in_json);
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
-  {
-    /* insert chunk */
-    for (i = 0; i <= stage_max; i++)
-    {
-      temp_len = len;
-      out_buf = insert_chunk(out_buf, &temp_len, out_json, stage_cur, i);
-      if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
-        goto abandon_entry;
-      memcpy(out_buf, in_buf, len);
-      out_json = cJSON_Duplicate(in_json, 1);
-    }
-  }
+  // stage_name = "chunk_insert";
+  // stage_short = "chunk_in";
+  // stage_max = cJSON_GetArraySize(in_json);
+  // for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  // {
+  //   /* insert chunk */
+  //   for (i = 0; i <= stage_max; i++)
+  //   {
+  //     temp_len = len;
+  //     out_buf = insert_chunk(out_buf, &temp_len, out_json, stage_cur, i);
+  //     if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
+  //       goto abandon_entry;
+  //     memcpy(out_buf, in_buf, len);
+  //     cJSON_Delete(out_json);
+  //     out_json = cJSON_Duplicate(in_json, 1);
+  //   }
+  // }
 
-  stage_name = "chunk_delete";
-  stage_short = "chunk_de";
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
-  {
-    /* delete chunk */
-    temp_len = len;
-    out_buf = delete_chunk(out_buf, &temp_len, out_json, stage_cur);
-    if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
-      goto abandon_entry;
-    ck_free(out_buf);
-    out_buf = ck_alloc_nozero(len);
-    memcpy(out_buf, in_buf, len);
-    out_json = cJSON_Duplicate(in_json, 1);
-  }
+  // if(stage_max > 1) {
+  //   stage_name = "chunk_delete";
+  //   stage_short = "chunk_de";
+  //   for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  //   {
+  //     /* delete chunk */
+  //     temp_len = len;
+  //     out_buf = delete_chunk(out_buf, &temp_len, out_json, stage_cur);
+  //     if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
+  //       goto abandon_entry;
+  //     ck_free(out_buf);
+  //     out_buf = ck_alloc_nozero(len);
+  //     memcpy(out_buf, in_buf, len);
+  //     cJSON_Delete(out_json);
+  //     out_json = cJSON_Duplicate(in_json, 1);
+  //   }
+  // }
 
-  stage_name = "chunk_exchange";
-  stage_short = "chunk_ex";
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
-  {
-    /*exchange chunk*/
-    for (i = stage_cur + 1; i < stage_max; i++)
-    {
-      out_buf = exchange_chunk(out_buf, len, out_json, stage_cur, i);
-      if (common_fuzz_stuff(argv, out_buf, len, out_json))
-        goto abandon_entry;
-      memcpy(out_buf, in_buf, len);
-      out_json = cJSON_Duplicate(in_json, 1);
-    }
-  }
+  // stage_name = "chunk_exchange";
+  // stage_short = "chunk_ex";
+  // for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
+  // {
+  //   /*exchange chunk*/
+  //   for (i = stage_cur + 1; i < stage_max; i++)
+  //   {
+  //     out_buf = exchange_chunk(out_buf, len, out_json, stage_cur, i);
+  //     if (common_fuzz_stuff(argv, out_buf, len, out_json))
+  //       goto abandon_entry;
+  //     memcpy(out_buf, in_buf, len);
+  //     cJSON_Delete(out_json);
+  //     out_json = cJSON_Duplicate(in_json, 1);
+  //   }
+  // }
 
+  // chunk_num = cJSON_GetArraySize(out_json);
+  // for (i = 0; i < chunk_num * chunk_num; i++) {
+  //   for (j = chunk_num - 1; j > 0; j--){
+  //     u32 rand = UR(j + 1);
+  //     out_buf = exchange_chunk(out_buf, len, out_json, j, rand);
+  //   }
+  //   if (common_fuzz_stuff(argv, out_buf, len, out_json))
+  //     goto abandon_entry;
+  //   memcpy(out_buf, in_buf, len);
+  //   cJSON_Delete(out_json);
+  //   out_json = cJSON_Duplicate(in_json, 1);
+  // }
+
+  /*********************************************
+   * INTERNAL CHUNK MUTATION                      *
+   * ******************************************/
+  // stage_name = "internal_chunk";
+  // stage_short = "inter_chunk";
+  // for(stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+  //   for(i = 0; i < extras_cnt; i++) {
+  //     replace_chunk_id(out_buf, out_json, stage_cur, extras[i].data, extras[i].len);
+  //     if (common_fuzz_stuff(argv, out_buf, len, out_json))
+  //       goto abandon_entry;
+  //     memcpy(out_buf, in_buf, len);
+  //     cJSON_Delete(out_json);
+  //     out_json = cJSON_Duplicate(in_json, 1);
+  //   }
+  // }
   /*********************************************
    * SIMPLE BITFLIP (+dictionary construction) *
    *********************************************/
@@ -5514,7 +5559,7 @@ static u8 fuzz_one(char** argv) {
     _arf[(_bf) >> 3] ^= (128 >> ((_bf) & 7)); \
   } while (0)
 
-  /* Single walking bit. */
+      /* Single walking bit. */
 
   stage_short = "flip1";
   stage_max   = len << 3;
@@ -6361,59 +6406,17 @@ skip_interest:
   ex_tmp = ck_alloc(len + MAX_DICT_FILE);
   
   json_iter = out_json->child;
-  // for (i = 0; i <= len; i++) {
+  for (i = 0; i <= len; i++) {
 
-  //   stage_cur_byte = i;
+    stage_cur_byte = i;
 
-  //   for (j = 0; j < extras_cnt; j++) {
+    for (j = 0; j < extras_cnt; j++) {
 
-  //     if (len + extras[j].len > MAX_FILE) {
-  //       stage_max--; 
-  //       continue;
-  //     }
+      if (len + extras[j].len > MAX_FILE) {
+        stage_max--; 
+        continue;
+      }
 
-  //     /* Insert token */
-  //     memcpy(ex_tmp + i, extras[j].data, extras[j].len);
-
-  //     /* Copy tail */
-  //     memcpy(ex_tmp + i + extras[j].len, out_buf + i, len - i);
-
-  //     /* Update format file */
-  //     if (i <= CHUNK_END(json_iter)) {
-
-  //     }
-
-  //     if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len, out_json)) {
-  //       ck_free(ex_tmp);
-  //       goto abandon_entry;
-  //     }
-
-  //     stage_cur++;
-
-  //   }
-
-  //   /* Copy head */
-  //   ex_tmp[i] = out_buf[i];  
-
-  // }
-
-  for (j = 0; j < extras_cnt; j++) {
-    if (len + extras[j].len > MAX_FILE) {
-      stage_max--;
-      continue;
-    }
-
-    json_iter = out_json->child;
-    while(json_iter) {
-      cJSON_SetIntValue(json_iter->child, CHUNK_START(json_iter) + extras[j].len);
-      cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) + extras[j].len);
-      json_iter = json_iter->next;
-    }
-    cJSON_SetIntValue(out_json->child->child, 0);
-    json_iter = out_json->child;
-
-    for (i = 0; i <= len; i++) {
-      stage_cur_byte = i;
       /* Insert token */
       memcpy(ex_tmp + i, extras[j].data, extras[j].len);
 
@@ -6421,23 +6424,62 @@ skip_interest:
       memcpy(ex_tmp + i + extras[j].len, out_buf + i, len - i);
 
       /* Update format file */
-      if (i > CHUNK_END(json_iter)) {
-        cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) - extras[j].len);
-        json_iter = json_iter->next;
-        cJSON_SetIntValue(json_iter->child, CHUNK_START(json_iter) - extras[j].len);
-      }
+      insert_block(out_json, i, extras[j].len);
+
       if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len, out_json)) {
         ck_free(ex_tmp);
         goto abandon_entry;
       }
-
       stage_cur++;
-
-      /* Copy head */
-      ex_tmp[i] = out_buf[i];
+      out_json = cJSON_Duplicate(in_json, 1);
     }
-    cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) - extras[j].len);
+
+    /* Copy head */
+    ex_tmp[i] = out_buf[i];  
+
   }
+
+  // for (j = 0; j < extras_cnt; j++) {
+  //   if (len + extras[j].len > MAX_FILE) {
+  //     stage_max--;
+  //     continue;
+  //   }
+
+  //   json_iter = out_json->child;
+  //   while(json_iter) {
+  //     cJSON_SetIntValue(json_iter->child, CHUNK_START(json_iter) + extras[j].len);
+  //     cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) + extras[j].len);
+  //     json_iter = json_iter->next;
+  //   }
+  //   cJSON_SetIntValue(out_json->child->child, 0);
+  //   json_iter = out_json->child;
+
+  //   for (i = 0; i <= len; i++) {
+  //     stage_cur_byte = i;
+  //     /* Insert token */
+  //     memcpy(ex_tmp + i, extras[j].data, extras[j].len);
+
+  //     /* Copy tail */
+  //     memcpy(ex_tmp + i + extras[j].len, out_buf + i, len - i);
+
+  //     /* Update format file */
+  //     if (i > CHUNK_END(json_iter)) {
+  //       cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) - extras[j].len);
+  //       json_iter = json_iter->next;
+  //       cJSON_SetIntValue(json_iter->child, CHUNK_START(json_iter) - extras[j].len);
+  //     }
+  //     if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len, out_json)) {
+  //       ck_free(ex_tmp);
+  //       goto abandon_entry;
+  //     }
+
+  //     stage_cur++;
+
+  //     /* Copy head */
+  //     ex_tmp[i] = out_buf[i];
+  //   }
+  //   cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) - extras[j].len);
+  // }
   out_json = cJSON_Duplicate(in_json, 1);
 
   ck_free(ex_tmp);
@@ -6511,52 +6553,6 @@ skip_extras:
    ****************/
 
 havoc_stage:
-  stage_name = "chunk_insert";
-  stage_short = "chunk_in";
-  stage_max = cJSON_GetArraySize(in_json);
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
-  {
-    /* insert chunk */
-    for (i = 0; i <= stage_max; i++)
-    {
-      temp_len = len;
-      out_buf = insert_chunk(out_buf, &temp_len, out_json, stage_cur, i);
-      if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
-        goto abandon_entry;
-      memcpy(out_buf, in_buf, len);
-      out_json = cJSON_Duplicate(in_json, 1);
-    }
-  }
-
-  stage_name = "chunk_delete";
-  stage_short = "chunk_de";
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
-  {
-    /* delete chunk */
-    temp_len = len;
-    out_buf = delete_chunk(out_buf, &temp_len, out_json, stage_cur);
-    if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
-      goto abandon_entry;
-    ck_free(out_buf);
-    out_buf = ck_alloc_nozero(len);
-    memcpy(out_buf, in_buf, len);
-    out_json = cJSON_Duplicate(in_json, 1);
-  }
-
-  stage_name = "chunk_exchange";
-  stage_short = "chunk_ex";
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
-  {
-    /*exchange chunk*/
-    for (i = stage_cur + 1; i < stage_max; i++)
-    {
-      out_buf = exchange_chunk(out_buf, len, out_json, stage_cur, i);
-      if (common_fuzz_stuff(argv, out_buf, len, out_json))
-        goto abandon_entry;
-      memcpy(out_buf, in_buf, len);
-      out_json = cJSON_Duplicate(in_json, 1);
-    }
-  }
 
   stage_cur_byte = -1;
 
@@ -6599,9 +6595,12 @@ havoc_stage:
     u32 use_stacking = 1 << (1 + UR(HAVOC_STACK_POW2));
 
     stage_cur_val = use_stacking;
- 
+
     for (i = 0; i < use_stacking; i++) {
-      switch (UR(15 + ((extras_cnt + a_extras_cnt) ? 2 : 0))) {
+
+      u32 num = UR(18 + ((extras_cnt + a_extras_cnt) ? 3 : 0));
+
+      switch (num) {
 
         case 0:
 
@@ -6850,7 +6849,6 @@ havoc_stage:
 
             /* Update format file */
             insert_block(out_json, clone_from, clone_len);
-
           }
 
           break;
@@ -6881,10 +6879,44 @@ havoc_stage:
 
           }
 
+        case 15: {
+            u32 chunk_num;
+            chunk_num = cJSON_GetArraySize(out_json);
+            out_buf = insert_chunk(out_buf, &temp_len, out_json, UR(chunk_num), UR(chunk_num + 1));
+            break;
+          }
+
+        case 16: {
+            u32 chunk_num;
+            chunk_num = cJSON_GetArraySize(out_json);
+            if(chunk_num > 1) {
+              out_buf = delete_chunk(out_buf, &temp_len, out_json, UR(chunk_num));
+            }
+            break;
+          }
+
+        case 17: {
+            u32 chunk_num;
+            chunk_num = cJSON_GetArraySize(out_json);
+            if(chunk_num > 1) {
+              out_buf = exchange_chunk(out_buf, temp_len, out_json, UR(chunk_num), UR(chunk_num));
+            }
+            break;
+          }
+
         /* Values 15 and 16 can be selected only if there are any extras
            present in the dictionaries. */
+        
+        case 18: {
+            if(extras_cnt > 0) {
+              u32 extra = UR(extras_cnt);
+              u32 chunk_index = UR(cJSON_GetArraySize(out_json));
+              replace_chunk_id(out_buf, out_json, chunk_index, extras[extra].data, extras[extra].len);
+            }
+            break;
+          }
 
-        case 15: {
+        case 19: {
 
             /* Overwrite bytes with an extra. */
 
@@ -6921,7 +6953,7 @@ havoc_stage:
 
           }
 
-        case 16: {
+        case 20: {
 
             u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
             u8* new_buf;
@@ -6986,9 +7018,12 @@ havoc_stage:
     /* out_buf might have been mangled a bit, so let's restore it to its
        original size and shape. */
 
-    if (temp_len < len) out_buf = ck_realloc(out_buf, len);
+    if (temp_len < len) {
+      out_buf = ck_realloc(out_buf, len);
+    } 
     temp_len = len;
     memcpy(out_buf, in_buf, len);
+    cJSON_Delete(out_json);
     out_json = cJSON_Duplicate(in_json, 1);
 
     /* If we're finding new stuff, let's run for a bit longer, limits
@@ -7111,8 +7146,10 @@ retry_splicing:
     memcpy(out_buf, in_buf, len);
 
     /* Update the format file. */
-    out_json = parse_json(queue_cur->format_file);
-    json_iter = out_json->child;
+    cJSON_Delete(in_json);
+    in_json = parse_json(queue_cur->format_file);
+
+    json_iter = in_json->child;
     while (CHUNK_END(json_iter) < split_at) {
       json_iter = json_iter->next;
     }
@@ -7121,11 +7158,18 @@ retry_splicing:
       target_iter = target_iter->next;
     }
     cJSON_SetIntValue(json_iter->child->next, CHUNK_END(target_iter));
+    cJSON *json_temp;
+    json_temp = json_iter->next;
     json_iter->next = target_iter->next;
-    in_json = cJSON_Duplicate(out_json, 1);
+    if(json_iter->next != NULL) {
+      json_iter->next->prev = json_iter;
+    }
+    target_iter->next = json_temp;
 
+    cJSON_Delete(out_json);
+    cJSON_Delete(target_json);
+    out_json = cJSON_Duplicate(in_json, 1);
     goto havoc_stage;
-
   }
 
 #endif /* !IGNORE_FINDS */
@@ -7150,6 +7194,9 @@ abandon_entry:
   if (in_buf != orig_in) ck_free(in_buf);
   ck_free(out_buf);
   ck_free(eff_map);
+
+  cJSON_Delete(in_json);
+  cJSON_Delete(out_json);
 
   return ret_val;
 
@@ -8535,7 +8582,7 @@ int main(int argc, char** argv) {
   read_testcases();
   load_auto();
   pivot_inputs();
-
+  
   if (extras_dir) load_extras(extras_dir);
 
   if (!timeout_given) find_timeout();

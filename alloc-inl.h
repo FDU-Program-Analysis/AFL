@@ -31,6 +31,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "config.h"
 #include "types.h"
@@ -176,7 +178,7 @@ static inline void* DFL_ck_realloc(void* orig, u32 size) {
 
     DFL_ck_free(orig);
     return NULL;
-
+    
   }
 
   if (orig) {
@@ -195,7 +197,7 @@ static inline void* DFL_ck_realloc(void* orig, u32 size) {
   }
 
   ALLOC_CHECK_SIZE(size);
-
+ 
 #ifndef DEBUG_BUILD
 
   ret = realloc(orig, size + ALLOC_OFF_TOTAL);

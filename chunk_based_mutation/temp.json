@@ -1,38 +1,101 @@
 {
-	"marker4":	{
+	"SOI":	{
 		"start":	0,
-		"end":	8,
+		"end":	2,
 		"id":	{
 			"start":	0,
-			"end":	4,
-			"name":	"XXXX"
+			"end":	2,
+			"name":	"soi"
 		}
 	},
-	"marker2":	{
-		"start":	8,
-		"end":	16,
+	"APP0":	{
+		"start":	2,
+		"end":	20,
 		"id":	{
 			"start":	0,
-			"end":	4,
-			"name":	"YYYY"
+			"end":	2,
+			"name":	"app0"
 		}
 	},
-	"marker3":	{
-		"start":	16,
-		"end":	24,
+	"dpt0":	{
+		"start":	20,
+		"end":	89,
 		"id":	{
 			"start":	0,
-			"end":	4,
-			"name":	"ZZZZ"
+			"end":	2,
+			"name":	"dpt0"
 		}
 	},
-	"marker1":	{
-		"start":	24,
-		"end":	32,
+	"dpt1":	{
+		"start":	89,
+		"end":	158,
 		"id":	{
 			"start":	0,
-			"end":	4,
-			"name":	"AAAA"
+			"end":	2,
+			"name":	"dpt1"
+		}
+	},
+	"sof":	{
+		"start":	158,
+		"end":	177,
+		"id":	{
+			"start":	0,
+			"end":	2,
+			"name":	"sof"
+		}
+	},
+	"dht0":	{
+		"start":	177,
+		"end":	207,
+		"id":	{
+			"start":	0,
+			"end":	2,
+			"name":	"dht0"
+		}
+	},
+	"dht1":	{
+		"start":	207,
+		"end":	269,
+		"id":	{
+			"start":	0,
+			"end":	2,
+			"name":	"dht1"
+		}
+	},
+	"dht2":	{
+		"start":	269,
+		"end":	297,
+		"id":	{
+			"start":	0,
+			"end":	2,
+			"name":	"dht2"
+		}
+	},
+	"dht3":	{
+		"start":	297,
+		"end":	334,
+		"id":	{
+			"start":	0,
+			"end":	2,
+			"name":	"dht3"
+		}
+	},
+	"sos":	{
+		"start":	334,
+		"end":	6844,
+		"id":	{
+			"start":	0,
+			"end":	2,
+			"name":	"sos"
+		}
+	},
+	"eoi":	{
+		"start":	6844,
+		"end":	6846,
+		"id":	{
+			"start":	0,
+			"end":	2,
+			"name":	"eoi"
 		}
 	}
 }
