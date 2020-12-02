@@ -19,7 +19,6 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 
-
 #include <unordered_set>
 
 using namespace llvm;
@@ -202,13 +201,24 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               LoadInst *Load = Builder.CreateLoad(PtrValue);
               Load->setMetadata(M.getMDKindID("nosanitize"),
                                 MDNode::get(CTX, None));
+              
+              // casting different type into int
+              Value *Cast = nullptr;
+              if (!Load->getPointerOperand()->getPointerElementType()->isIntegerTy()) {
+                Cast = Builder.CreateFPCast(Load, Int32Ty);
+              }
 
               // caculating index
               if (idx != -1) {
                 RandomNum ^= idx;
               }
               ConstantInt *VarNum = ConstantInt::get(Int32Ty, RandomNum);
-              Value *Xor = Builder.CreateXor(Load, VarNum);
+              Value *Xor = nullptr;
+              if (Cast != nullptr) {
+                Xor = Builder.CreateXor(Cast, VarNum);
+              } else {
+                Xor = Builder.CreateXor(Load, VarNum);  
+              }
               
               // inject a call to printf
               // Value *FormatStrPtr = 
