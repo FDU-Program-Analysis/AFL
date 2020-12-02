@@ -109,23 +109,27 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               } else if (auto *GEPI = dyn_cast<GetElementPtrInst>(PtrValue)) {
                 VarName = GEPI->getPointerOperand()->getName();
                 outs() << "GEP Inst: " << *GEPI << "\n";
-                if (!dyn_cast<ConstantInt>(GEPI->getOperand(2))) {
-                  Value *VarIdx = GEPI->getOperand(2);
-                  outs() << *VarIdx << "\n";
-                  Inst = VarIdx;
+                if (GEPI->getNumIndices() >= 2) {
+                  if (!dyn_cast<ConstantInt>(GEPI->getOperand(2))) {
+                    Value *VarIdx = GEPI->getOperand(2);
+                    outs() << *VarIdx << "\n";
+                    Inst = VarIdx;
+                  }
                 }
                 
                 while (auto *PI = dyn_cast<GetElementPtrInst>(GEPI->getPointerOperand())) {
                   GEPI = PI;
                   VarName = GEPI->getPointerOperand()->getName();
                   outs() << "GEP Inst: " << *GEPI << "\n";
-                  if (!dyn_cast<ConstantInt>(GEPI->getOperand(2))) {
-                    Value *VarIdx = GEPI->getOperand(2);
-                    outs() << *VarIdx << "\n";
-                    if (Inst != nullptr) {
-                      auto *XorIdx = Builder.CreateXor(VarIdx, Inst);
-                      Inst = XorIdx;
-                      outs() << "Xor Inst: " << *Inst << "\n";
+                  if (GEPI->getNumIndices() >= 2) {
+                    if (!dyn_cast<ConstantInt>(GEPI->getOperand(2))) {
+                      Value *VarIdx = GEPI->getOperand(2);
+                      outs() << *VarIdx << "\n";
+                      if (Inst != nullptr) {
+                        auto *XorIdx = Builder.CreateXor(VarIdx, Inst);
+                        Inst = XorIdx;
+                        outs() << "Xor Inst: " << *Inst << "\n";
+                      }
                     }
                   }
               
