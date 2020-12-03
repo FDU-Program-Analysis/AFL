@@ -59,6 +59,7 @@
 
 u8  __afl_area_initial[MAP_SIZE];
 u8* __afl_area_ptr = __afl_area_initial;
+u8* __state_map_ptr = __afl_area_initial;
 
 __thread u32 __afl_prev_loc;
 
@@ -73,6 +74,7 @@ static u8 is_persistent;
 static void __afl_map_shm(void) {
 
   u8 *id_str = getenv(SHM_ENV_VAR);
+  u8 *id_state_str = getenv(SHM_STATE_ENV_VAR);
 
   /* If we're running under AFL, attach to the appropriate region, replacing the
      early-stage __afl_area_initial region that is needed to allow some really
@@ -95,6 +97,22 @@ static void __afl_map_shm(void) {
 
   }
 
+  if (id_state_str) {
+
+    u32 shm_id = atoi(id_state_str);
+
+    __state_map_ptr = shmat(shm_id, NULL, 0);
+
+    /* Whooooops. */
+
+    if (__state_map_ptr == (void *)-1) _exit(1);
+
+    /* Write something into the bitmap so that even with low AFL_INST_RATIO,
+       our parent doesn't give up on us. */
+
+    __state_map_ptr[0] = 1;
+
+  }
 }
 
 

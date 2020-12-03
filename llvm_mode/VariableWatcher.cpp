@@ -204,7 +204,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               
               // casting different type into int
               Value *Cast = nullptr;
-              if (!Load->getPointerOperand()->getPointerElementType()->isIntegerTy()) {
+              if (!Load->getPointerOperandType()->getPointerElementType()->isIntegerTy()) {
                 Cast = Builder.CreateFPCast(Load, Int32Ty);
               }
 
@@ -247,7 +247,8 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
       }
     }
 
-    outs() << "\ninstruction number: " << inst_count << "\n";
+    // outs() << "\ninstruction number: " << inst_count << "\n";
+    OKF("State-Pass Instrumented %u locations.", inst_count);
 
     if (inst_count)
       Instrumented = true;

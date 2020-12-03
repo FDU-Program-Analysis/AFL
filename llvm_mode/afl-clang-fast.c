@@ -134,9 +134,21 @@ static void edit_params(u32 argc, char** argv) {
 #endif
 #else
   cc_params[cc_par_cnt++] = "-Xclang";
+  cc_params[cc_par_cnt++] = "-add-plugin";
+  cc_params[cc_par_cnt++] = "-Xclang";
+  cc_params[cc_par_cnt++] = "find-state-variable";
+  // cc_params[cc_par_cnt++] = "-Xclang";
+  // cc_params[cc_par_cnt++] = "-plugin-arg-find-state-variable";
+  // cc_params[cc_par_cnt++] = "-Xclang";
+  // cc_params[cc_par_cnt++] = "-enable-log";
+  cc_params[cc_par_cnt++] = "-Xclang";
   cc_params[cc_par_cnt++] = "-load";
   cc_params[cc_par_cnt++] = "-Xclang";
   cc_params[cc_par_cnt++] = alloc_printf("%s/afl-llvm-pass.so", obj_path);
+  cc_params[cc_par_cnt++] = "-Xclang";
+  cc_params[cc_par_cnt++] = "-load";
+  cc_params[cc_par_cnt++] = "-Xclang";
+  cc_params[cc_par_cnt++] = alloc_printf("%s/afl-state-pass.so", obj_path);
 #endif /* ^USE_TRACE_PC */
 
   cc_params[cc_par_cnt++] = "-Qunused-arguments";

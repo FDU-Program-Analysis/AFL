@@ -23,6 +23,8 @@ BIN_PATH     = $(PREFIX)/bin
 VERSION     = $(shell grep '^\#define VERSION ' ../config.h | cut -d '"' -f2)
 
 LLVM_CONFIG ?= llvm-config
+LABYRINTH_CC ?= /home/mondaylord/Documents/state-machine-inference/variable-extractor/install/bin/clang
+LABYRINTH_CXX ?= /home/mondaylord/Documents/state-machine-inference/variable-extractor/install/bin/clang++
 
 CFLAGS      ?= -O3 -funroll-loops
 CFLAGS      += -Wall -D_FORTIFY_SOURCE=2 -g -Wno-pointer-sign \
@@ -56,7 +58,7 @@ ifeq "$(origin CC)" "default"
 endif
 
 ifndef AFL_TRACE_PC
-  PROGS      = ../afl-clang-fast ../afl-llvm-pass.so ../afl-llvm-rt.o ../afl-llvm-rt-32.o ../afl-llvm-rt-64.o
+  PROGS      = ../afl-clang-fast ../afl-llvm-pass.so ../afl-state-pass.so ../afl-llvm-rt.o ../afl-llvm-rt-32.o ../afl-llvm-rt-64.o
 else
   PROGS      = ../afl-clang-fast ../afl-llvm-rt.o ../afl-llvm-rt-32.o ../afl-llvm-rt-64.o
 endif
@@ -83,6 +85,9 @@ endif
 ../afl-llvm-pass.so: afl-llvm-pass.so.cc | test_deps
 	$(CXX) $(CLANG_CFL) -shared $< -o $@ $(CLANG_LFL)
 
+../afl-state-pass.so: VariableWatcher.cpp | test_deps
+	$(CXX) $(CLANG_CFL) -shared $< -o $@ $(CLANG_LFL)
+
 ../afl-llvm-rt.o: afl-llvm-rt.o.c | test_deps
 	$(CC) $(CFLAGS) -fPIC -c $< -o $@
 
@@ -96,7 +101,7 @@ endif
 
 test_build: $(PROGS)
 	@echo "[*] Testing the CC wrapper and instrumentation output..."
-	unset AFL_USE_ASAN AFL_USE_MSAN AFL_INST_RATIO; AFL_QUIET=1 AFL_PATH=. AFL_CC=$(CC) ../afl-clang-fast $(CFLAGS) ../test-instr.c -o test-instr $(LDFLAGS)
+	unset AFL_USE_ASAN AFL_USE_MSAN AFL_INST_RATIO; AFL_QUIET=1 AFL_PATH=. AFL_CC=$(LABYRINTH_CC) ../afl-clang-fast $(CFLAGS) ../test-instr.c -o test-instr $(LDFLAGS)
 # Use /dev/null to avoid problems with optimization messing up expected
 # branches. See https://github.com/google/AFL/issues/30.
 	../afl-showmap -m none -q -o .test-instr0 ./test-instr < /dev/null

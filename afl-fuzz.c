@@ -37,6 +37,10 @@
 #endif
 #define _FILE_OFFSET_BITS 64
 
+#ifndef STATE_VAR
+#define STATE_VAR
+#endif
+
 #include "config.h"
 #include "types.h"
 #include "debug.h"
@@ -852,7 +856,9 @@ EXP_ST void destroy_queue(void) {
     n = q->next;
     ck_free(q->fname);
     ck_free(q->trace_mini[0]);
+    #ifdef STATE_VAR
     ck_free(q->trace_mini[1]);
+    #endif
     ck_free(q);
     q = n;
 
@@ -878,33 +884,33 @@ EXP_ST void write_bitmap(void) {
   fname = alloc_printf("%s/fuzz_bitmap", out_dir);
   fd = open(fname, O_WRONLY | O_CREAT | O_TRUNC, 0600);
 
+  #ifdef STATE_VAR
   fname_state = alloc_printf("%s/state_bitmap", out_dir);
   fd_state = open(fname_state, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (fd_state < 0) PFATAL("Unable to open '%s'", fname_state);
+  ck_write(fd_state, virgin_bits[1], MAP_SIZE, fname_state);
+  close(fd_state);
+  ck_free(fname_state);
+  #endif
 
   if (fd < 0) PFATAL("Unable to open '%s'", fname);
-  if (fd_state < 0) PFATAL("Unable to open '%s'", fname_state);
 
   ck_write(fd, virgin_bits[0], MAP_SIZE, fname);
-  ck_write(fd_state, virgin_bits[1], MAP_SIZE, fname_state);
 
   close(fd);
-  close(fd_state);
   ck_free(fname);
-  ck_free(fname_state);
-
 }
 
 
 /* Read bitmap from file. This is for the -B option again. */
 
-EXP_ST void read_bitmap(u8* fname, u8 isState) {
+EXP_ST void read_bitmap(u8* fname) {
 
   s32 fd = open(fname, O_RDONLY);
 
   if (fd < 0) PFATAL("Unable to open '%s'", fname);
 
-  if (isState) ck_read(fd, virgin_bits[1], MAP_SIZE, fname);
-  else ck_read(fd, virgin_bits[0], MAP_SIZE, fname);
+  ck_read(fd, virgin_bits[0], MAP_SIZE, fname);
 
   close(fd);
 
@@ -1245,8 +1251,9 @@ static inline void classify_counts(u32* mem) {
 static void remove_shm(void) {
 
   shmctl(shm_id, IPC_RMID, NULL);
+  #ifdef STATE_VAR
   shmctl(shm_state_id, IPC_RMID, NULL);
-
+  #endif
 }
 
 
@@ -1319,7 +1326,8 @@ static void update_bitmap_score(struct queue_entry* q) {
        score_changed = 1;
 
      }
-    if (state_bits[i]) {
+     #ifdef STATE_VAR
+     if (state_bits[i]) {
 
        if (top_state_rated[i]) {
 
@@ -1350,6 +1358,7 @@ static void update_bitmap_score(struct queue_entry* q) {
        score_changed = 1;
 
      }
+     #endif
   }
 }
 
@@ -1404,6 +1413,7 @@ static void cull_queue(void) {
       if (!top_rated[i]->was_fuzzed) pending_favored++;
 
     }
+    #ifdef STATE_VAR
     if (top_state_rated[i] && (temp_state_v[i >> 3] & (1 << (i & 7)))) {
 
       u32 j = MAP_SIZE >> 3;
@@ -1420,6 +1430,7 @@ static void cull_queue(void) {
       if (!top_state_rated[i]->was_fuzzed) pending_favored++;
 
     }
+    #endif
   }
   q = queue;
 
@@ -1436,26 +1447,19 @@ static void cull_queue(void) {
 EXP_ST void setup_shm(void) {
 
   u8* shm_str;
-  u8* shm_state_str;
 
   if (!in_bitmap) memset(virgin_bits[0], 255, MAP_SIZE);
-  if (!in_bitmap) memset(virgin_bits[1], 255, MAP_SIZE);
 
   memset(virgin_tmout[0], 255, MAP_SIZE);
-  memset(virgin_tmout[1], 255, MAP_SIZE);
   memset(virgin_crash[0], 255, MAP_SIZE);
-  memset(virgin_crash[1], 255, MAP_SIZE);
 
   shm_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);
-  shm_state_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);//TODO:difference
 
   if (shm_id < 0) PFATAL("shmget() failed");
-  if (shm_state_id < 0) PFATAL("shmget() failed");
 
   atexit(remove_shm);
 
   shm_str = alloc_printf("%d", shm_id);
-  shm_state_str = alloc_printf("%d", shm_state_id);
 
   /* If somebody is asking us to fuzz instrumented binaries in dumb mode,
      we don't want them to detect instrumentation, since we won't be sending
@@ -1463,17 +1467,27 @@ EXP_ST void setup_shm(void) {
      later on, perhaps? */
 
   if (!dumb_mode) setenv(SHM_ENV_VAR, shm_str, 1);
-  if (!dumb_mode) setenv(SHM_STATE_ENV_VAR, shm_state_str, 1);
 
   ck_free(shm_str);
-  ck_free(shm_state_str);
 
   trace_bits = shmat(shm_id, NULL, 0);
-  state_bits = shmat(shm_state_id, NULL, 0);
+  #ifdef STATE_VAR
+    u8* shm_state_str;
+    if (!in_bitmap) memset(virgin_bits[1], 255, MAP_SIZE);
+    memset(virgin_tmout[1], 255, MAP_SIZE);
+    memset(virgin_crash[1], 255, MAP_SIZE);
+    shm_state_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);
+    if (shm_state_id < 0) PFATAL("shmget() failed");
+    shm_state_str = alloc_printf("%d", shm_state_id);
+    if (!dumb_mode) setenv(SHM_STATE_ENV_VAR, shm_state_str, 1);
+    ck_free(shm_state_str);
+
+    state_bits = shmat(shm_state_id, NULL, 0);
+    // state_bits = shmat(shm_id, NULL, 0);
+    if (state_bits == (void *)-1) PFATAL("shmat() failed");
+  #endif
   
   if (trace_bits == (void *)-1) PFATAL("shmat() failed");
-  if (state_bits == (void *)-1) PFATAL("shmat() failed");
-
 }
 
 
@@ -2379,7 +2393,9 @@ static u8 run_target(char** argv, u32 timeout) {
      territory. */
 
   memset(trace_bits, 0, MAP_SIZE);
+  #ifdef STATE_VAR
   memset(state_bits, 0, MAP_SIZE);
+  #endif
   MEM_BARRIER();
 
   /* If we're running in "dumb" mode, we can't rely on the fork server
@@ -2538,7 +2554,9 @@ static u8 run_target(char** argv, u32 timeout) {
 
 #ifdef WORD_SIZE_64
   classify_counts((u64*)trace_bits);
+  #ifdef STATE_VAR
   classify_counts((u64*)state_bits);
+  #endif
 #else
   classify_counts((u32*)trace_bits);
   classify_counts((u32*)state_bits);
@@ -2653,9 +2671,12 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   static u8 first_trace[MAP_SIZE];
   static u8 first_state_trace[MAP_SIZE];
 
-  u8  fault = 0, new_bits[2] = {0}, var_detected = 0, hnb[2] = {0},
-      first_run = (q->exec_cksum[0] == 0 && q->exec_cksum[1] == 0);
-
+  u8  fault = 0, new_bits[2] = {0}, var_detected = 0, hnb[2] = {0};
+  #ifdef STATE_VAR
+  u8  first_run = (q->exec_cksum[0] == 0 && q->exec_cksum[1] == 0);
+  #else
+  u8  first_run = q->exec_cksum[0] == 0;
+  #endif
   u64 start_us, stop_us;
 
   s32 old_sc = stage_cur, old_sm = stage_max;
@@ -2681,15 +2702,17 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   if (dumb_mode != 1 && !no_forkserver && !forksrv_pid)
     init_forkserver(argv);
 
+  #ifdef STATE_VAR
   if (q->exec_cksum[0] && q->exec_cksum[1]) {
-
-    memcpy(first_trace, trace_bits, MAP_SIZE);
     memcpy(first_state_trace, state_bits, MAP_SIZE);
-    hnb[0] = has_new_bits(virgin_bits[0], 0);
     hnb[1] = has_new_bits(virgin_bits[1], 1);
-    new_bits[0] =(hnb[0] > new_bits[0]) ? hnb[0] : new_bits[0];
     new_bits[1] =(hnb[1] > new_bits[1]) ? hnb[1] : new_bits[1];
-
+  #else
+  if (q->exec_cksum[0]) {
+  #endif
+    memcpy(first_trace, trace_bits, MAP_SIZE);
+    hnb[0] = has_new_bits(virgin_bits[0], 0);
+    new_bits[0] =(hnb[0] > new_bits[0]) ? hnb[0] : new_bits[0];
   }
 
   start_us = get_cur_time_us();
@@ -2709,29 +2732,42 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
     if (stop_soon || fault != crash_mode) goto abort_calibration;
 
-    if (!dumb_mode && !stage_cur && !count_bytes(trace_bits) &&!count_bytes(state_bits)) {
+    #ifdef STATE_VAR
+    if (!dumb_mode && !stage_cur && (!count_bytes(trace_bits) ||!count_bytes(state_bits))) {
+    #else
+    if (!dumb_mode && !stage_cur && !count_bytes(trace_bits)) {
+    #endif
       fault = FAULT_NOINST;
       goto abort_calibration;
     }
 
     cksum[0] = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+    #ifdef STATE_VAR
     cksum[1] = hash32(state_bits, MAP_SIZE, HASH_CONST);
-
     if (q->exec_cksum[0] != cksum[0] && q->exec_cksum[1] != cksum[1]) {
-
-      hnb[0] = has_new_bits(virgin_bits[0], 0);
       hnb[1] = has_new_bits(virgin_bits[1], 1);
-      new_bits[0] =(hnb[0] > new_bits[0]) ? hnb[0] : new_bits[0];
       new_bits[1] =(hnb[1] > new_bits[1]) ? hnb[1] : new_bits[1];
+    #else
+    if (q->exec_cksum[0] != cksum[0]) {
+    #endif
+      hnb[0] = has_new_bits(virgin_bits[0], 0);
+      new_bits[0] =(hnb[0] > new_bits[0]) ? hnb[0] : new_bits[0];
 
+      #ifdef STATE_VAR
       if (q->exec_cksum[0] && q->exec_cksum[1]) {
+      #else
+      if (q->exec_cksum[0]) {
+      #endif
 
         u32 i;
 
         for (i = 0; i < MAP_SIZE; i++) {
-
-          if (!var_bytes[i] && first_trace[i] != trace_bits[i] && first_state_trace[i]!=state_bits[i]) {
-
+          #ifdef STATE_VAR
+          if (!var_bytes[i] && (first_trace[i] != trace_bits[i] || first_state_trace[i]!=state_bits[i])) {
+          #else
+          if (!var_bytes[i] && first_trace[i] != trace_bits[i]) {
+          #endif
+          
             var_bytes[i] = 1;
             stage_max    = CAL_CYCLES_LONG;
 
@@ -2744,10 +2780,11 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
       } else {
 
         q->exec_cksum[0] = cksum[0];
-        q->exec_cksum[1] = cksum[1];
         memcpy(first_trace, trace_bits, MAP_SIZE);
+        #ifdef STATE_VAR
+        q->exec_cksum[1] = cksum[1];
         memcpy(first_state_trace, state_bits, MAP_SIZE);
-
+        #endif
       }
 
     }
@@ -2764,26 +2801,33 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
   q->exec_us     = (stop_us - start_us) / stage_max;
   q->bitmap_size[0] = count_bytes(trace_bits);
+  #ifdef STATE_VAR
   q->bitmap_size[1] = count_bytes(state_bits);
+  total_bitmap_size[1] += q->bitmap_size[1];
+  total_bitmap_entries[1]++;
+  #endif
   q->handicap    = handicap;
   q->cal_failed  = 0;
 
   total_bitmap_size[0] += q->bitmap_size[0];
-  total_bitmap_size[1] += q->bitmap_size[1];
   total_bitmap_entries[0]++;
-  total_bitmap_entries[1]++;
 
   update_bitmap_score(q);
 
   /* If this case didn't result in new output from the instrumentation, tell
      parent. This is a non-critical problem, but something to warn the user
      about. */
-
-  if (!dumb_mode && first_run && !fault && !new_bits[0] &&!new_bits[1]) fault = FAULT_NOBITS;
-
+  #ifdef STATE_VAR
+  if (!dumb_mode && first_run && !fault && (!new_bits[0] || !new_bits[1])) fault = FAULT_NOBITS;
+  #else
+  if (!dumb_mode && first_run && !fault && !new_bits[0]) fault = FAULT_NOBITS;
+  #endif
 abort_calibration:
-
+  #ifdef STATE_VAR
   if ((new_bits[0] == 2 || new_bits[1] == 2) && !q->has_new_cov) {
+  #else
+  if ((new_bits[0] == 2) && !q->has_new_cov) {
+  #endif
     q->has_new_cov = 1;
     queued_with_cov++;
   }
@@ -3254,16 +3298,22 @@ static void write_crash_readme(void) {
 static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
   u8  *fn = "";
-  u8  hnb;
+  u8  hnb[2];
   s32 fd;
   u8  keeping = 0, res;
 
   if (fault == crash_mode) {
+    hnb[0] = has_new_bits(virgin_bits[0], 0);
+    #ifdef STATE_VAR
+    hnb[1] = has_new_bits(virgin_bits[1], 1);
 
     /* Keep only if there are new bits in the map, add to queue for
        future fuzzing, etc. */
 
-    if (!(hnb = has_new_bits(virgin_bits[0], 0) || has_new_bits(virgin_bits[1], 1))) {
+    if (!(hnb[0] || hnb[1])) {
+    #else
+    if (!hnb[0]) {
+    #endif
       if (crash_mode) total_crashes++;
       return 0;
     }    
@@ -3271,7 +3321,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 #ifndef SIMPLE_FILES
 
     fn = alloc_printf("%s/queue/id:%06u,%s", out_dir, queued_paths,
-                      describe_op(hnb));
+                      describe_op(hnb[0]));
 
 #else
 
@@ -3280,15 +3330,19 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 #endif /* ^!SIMPLE_FILES */
 
     add_to_queue(fn, len, 0);
-
-    if (hnb == 2) {
+    #ifdef STATE_VAR
+    if (hnb[0] == 2 || hnb[1] == 2) {
+    #else
+    if (hnb[0] == 2) {
+    #endif
       queue_top->has_new_cov = 1;
       queued_with_cov++;
     }
 
     queue_top->exec_cksum[0] = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+    #ifdef STATE_VAR
     queue_top->exec_cksum[1] = hash32(state_bits, MAP_SIZE, HASH_CONST);
-
+    #endif
     /* Try to calibrate inline; this also calls update_bitmap_score() when
        successful. */
 
@@ -3323,14 +3377,19 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #ifdef WORD_SIZE_64
         simplify_trace((u64*)trace_bits);
+        #ifdef STATE_VAR
         simplify_trace((u64*)state_bits);
+        #endif
 #else
         simplify_trace((u32*)trace_bits);
         simplify_trace((u32*)state_bits);
 #endif /* ^WORD_SIZE_64 */
 
-        if (!has_new_bits(virgin_tmout[0], 0) || has_new_bits(virgin_bits[1], 1)) return keeping;
-
+        #ifdef STATE_VAR
+        if (!(has_new_bits(virgin_tmout[0], 0) || has_new_bits(virgin_bits[1], 1))) return keeping;
+        #else
+        if (!has_new_bits(virgin_tmout[0], 0)) return keeping;
+        #endif
       }
 
       unique_tmouts++;
@@ -3389,14 +3448,19 @@ keep_as_crash:
 
 #ifdef WORD_SIZE_64
         simplify_trace((u64*)trace_bits);
+        #ifdef STATE_VAR
         simplify_trace((u64*)state_bits);
+        #endif
 #else
         simplify_trace((u32*)trace_bits);
         simplify_trace((u32*)state_bits);
 #endif /* ^WORD_SIZE_64 */
 
-        if (!has_new_bits(virgin_crash[0], 0) || has_new_bits(virgin_bits[1], 1)) return keeping;
-
+        #ifdef STATE_VAR
+        if (!(has_new_bits(virgin_crash[0], 0) || has_new_bits(virgin_bits[1], 1))) return keeping;
+        #else
+        if (!has_new_bits(virgin_crash[0], 0)) return keeping;
+        #endif
       }
 
       if (!unique_crashes) write_crash_readme();
@@ -4406,7 +4470,7 @@ static void show_stats(void) {
 
   SAYF(bV bSTOP "       havoc : " cRST "%-37s " bSTG bV bSTOP, tmp);
 
-  if (t_bytes) sprintf(tmp, "%0.02f%%", stab_ratio);
+  if (t_bytes[0]) sprintf(tmp, "%0.02f%%", stab_ratio);
     else strcpy(tmp, "n/a");
 
   SAYF(" stability : %s%-10s " bSTG bV "\n", (stab_ratio < 85 && var_byte_count > 40) 
@@ -4673,6 +4737,7 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
       /* Note that we don't keep track of crashes or hangs here; maybe TODO? */
 
       cksum[0] = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+      #ifdef STATE_VAR
       cksum[1] = hash32(state_bits, MAP_SIZE, HASH_CONST);
 
       /* If the deletion had no impact on the trace, make it permanent. This
@@ -4681,7 +4746,9 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
          negatives every now and then. */
 
       if (cksum[0] == q->exec_cksum[0] || cksum[1] == q->exec_cksum[1]) {
-
+      #else
+      if (cksum[0] == q->exec_cksum[0]) {
+      #endif
         u32 move_tail = q->len - remove_pos - trim_avail;
 
         q->len -= trim_avail;
@@ -4697,8 +4764,9 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
 
           needs_write = 1;
           memcpy(clean_trace, trace_bits, MAP_SIZE);
+          #ifdef STATE_VAR
           memcpy(clean_state_trace, state_bits, MAP_SIZE);
-
+          #endif
         }
 
       } else remove_pos += remove_len;
@@ -4731,6 +4799,9 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
     close(fd);
 
     memcpy(trace_bits, clean_trace, MAP_SIZE);
+    #ifdef STATE_VAR
+    memcpy(state_bits, clean_state_trace, MAP_SIZE);
+    #endif
     update_bitmap_score(q);
 
   }
@@ -5253,8 +5324,11 @@ static u8 fuzz_one(char** argv) {
 
   /* Skip deterministic fuzzing if exec path checksum puts this out of scope
      for this master instance. */
-
-  if (master_max && (queue_cur->exec_cksum[0] % master_max) != master_id - 1 && (queue_cur->exec_cksum[1] % master_max) != master_id - 1)
+  #ifdef STATE_VAR
+  if (master_max && ((queue_cur->exec_cksum[0] % master_max) != master_id - 1) && ((queue_cur->exec_cksum[1] % master_max) != master_id - 1))
+  #else
+  if (master_max && ((queue_cur->exec_cksum[0] % master_max) != master_id - 1))
+  #endif
     goto havoc_stage;
 
   doing_det = 1;
@@ -5322,10 +5396,13 @@ static u8 fuzz_one(char** argv) {
     if (!dumb_mode && (stage_cur & 7) == 7) {
 
       u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+      #ifdef STATE_VAR
       u32 state_cksum = hash32(state_bits, MAP_SIZE, HASH_CONST);
 
       if (stage_cur == stage_max - 1 && cksum == prev_cksum[0] && state_cksum == prev_cksum[1]) {
-
+      #else
+      if (stage_cur == stage_max - 1 && cksum == prev_cksum[0]) {
+      #endif
         /* If at end of file and we are still collecting a string, grab the
            final character and force output. */
 
@@ -5335,8 +5412,13 @@ static u8 fuzz_one(char** argv) {
         if (a_len >= MIN_AUTO_EXTRA && a_len <= MAX_AUTO_EXTRA)
           maybe_add_auto(a_collect, a_len);
 
-      } else if (cksum != prev_cksum[0] || state_cksum != prev_cksum[1]) {
-
+      }
+      #ifdef STATE_VAR
+      else if (cksum != prev_cksum[0] || state_cksum != prev_cksum[1]) {
+        prev_cksum[1] = state_cksum;
+      #else
+      else if (cksum != prev_cksum[0]) {
+      #endif
         /* Otherwise, if the checksum has changed, see if we have something
            worthwhile queued up, and collect that if the answer is yes. */
 
@@ -5345,15 +5427,15 @@ static u8 fuzz_one(char** argv) {
 
         a_len = 0;
         prev_cksum[0] = cksum;
-        prev_cksum[1] = state_cksum;
-
       }
 
       /* Continue collecting string, but only if the bit flip actually made
          any difference - we don't want no-op tokens. */
-
-      if (cksum != queue_cur->exec_cksum[0] && state_cksum != queue_cur->exec_cksum[1]) {
-
+      #ifdef STATE_VAR
+      if (cksum != queue_cur->exec_cksum[0] || state_cksum != queue_cur->exec_cksum[1]) {
+      #else
+      if (cksum != queue_cur->exec_cksum[0]) {
+      #endif
         if (a_len < MAX_AUTO_EXTRA) a_collect[a_len] = out_buf[stage_cur >> 3];        
         a_len++;
 
@@ -5481,12 +5563,20 @@ static u8 fuzz_one(char** argv) {
 
       if (!dumb_mode && len >= EFF_MIN_LEN){
         cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+        #ifdef STATE_VAR
         state_cksum = hash32(state_bits, MAP_SIZE, HASH_CONST);
+        #endif
       }else{
         cksum = ~queue_cur->exec_cksum[0];
+        #ifdef STATE_VAR
         state_cksum = ~queue_cur->exec_cksum[1];
+        #endif
       }
-      if (cksum != queue_cur->exec_cksum[0] && state_cksum != queue_cur->exec_cksum[1]) {
+      #ifdef STATE_VAR
+      if (cksum != queue_cur->exec_cksum[0] || state_cksum != queue_cur->exec_cksum[1]) {
+      #else
+      if (cksum != queue_cur->exec_cksum[0]) {
+      #endif
         eff_map[EFF_APOS(stage_cur)] = 1;
         eff_cnt++;
       }
@@ -8087,6 +8177,10 @@ int main(int argc, char** argv) {
 
         /* Version number has been printed already, just quit. */
         exit(0);
+      case 's':
+        #ifndef STATE_VAR
+        #define STATE_VAR
+        #endif
 
       default:
 
