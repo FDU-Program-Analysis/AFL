@@ -204,8 +204,8 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               
               // casting different type into int
               Value *Cast = nullptr;
-              if (!Load->getPointerOperandType()->getPointerElementType()->isIntegerTy()) {
-                Cast = Builder.CreateFPCast(Load, Int32Ty);
+              if (!(Load->getPointerOperandType()->getPointerElementType()->isIntegerTy())) {
+                Cast = Builder.CreateBitCast(Load, Int32Ty);
               }
 
               // caculating index
