@@ -4,45 +4,42 @@ import time
 
 def get_all_inputs():
     list = []
-    for root, dirs, files in os.walk("/home/dp/fuzzing/chunk-afl-evaluation/imagemagickoutput/afl-slave/queue"):
+    for root, dirs, files in os.walk("/home/dp/Documents/fuzzing/chunk-afl-evaluation/imagemagickoutput-hybrid-afl/afl-slave/queue"):
         for filename in files:
             list.append(os.path.join(root, filename))
 
-    for root, dirs, files in os.walk("/home/dp/fuzzing/chunk-afl-evaluation/imagemagickoutput/afl-slave/hangs"):
+    for root, dirs, files in os.walk("/home/dp/Documents/fuzzing/chunk-afl-evaluation/imagemagickoutput-hybrid-afl/afl-slave/hangs"):
         for filename in files:
             list.append(os.path.join(root, filename))
 
-    for root, dirs, files in os.walk("/home/dp/fuzzing/chunk-afl-evaluation/imagemagickoutput/afl-master/queue"):
+    for root, dirs, files in os.walk("/home/dp/Documents/fuzzing/chunk-afl-evaluation/imagemagickoutput-hybrid-afl/afl-master/queue"):
         for filename in files:
             list.append(os.path.join(root, filename))
 
-    for root, dirs, files in os.walk("/home/dp/fuzzing/chunk-afl-evaluation/imagemagickoutput/afl-master/hangs"):
+    for root, dirs, files in os.walk("/home/dp/Documents/fuzzing/chunk-afl-evaluation/imagemagickoutput-hybrid-afl/afl-master/hangs"):
         for filename in files:
             list.append(os.path.join(root, filename))
     return list
 
 
-basetime = os.path.getmtime(
-    "/home/dp/fuzzing/chunk-afl-evaluation/imagemagickoutput/afl-master/queue/id:000005,src:000000,op:flip1,pos:0,+cov")
+basetime = os.path.getctime(
+    "/home/dp/Documents/fuzzing/chunk-afl-evaluation/imagemagickoutput-hybrid-afl/afl-master/queue/id:000005,src:000000,op:flip1,pos:0,+cov")
 
 input_list = get_all_inputs()
 dict = {}
-os.chdir("/home/dp/fuzzing/chunk-afl-evaluation/libsrc/chunk-afl")
+os.chdir("/home/dp/Documents/fuzzing/chunk-afl-evaluation/lib-src/afl-lib")
 os.system("find . -name '*.gcda'|xargs rm -f")
 index = 0
 for input in input_list:
-    index += 1
-    if index == 10:
-        break
     if (input.split(".")[-1] == "json"):
         continue
-    os.system("/home/dp/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/identify -verbose " + input)
+    os.system("/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/identify -verbose " + input)
     
     os.system("lcov -c -o coverage.info -d .")
     file = open("coverage.info", "r")
     line = file.readline()
     cur_file = ""
-    filetime = os.path.getmtime(input)
+    filetime = os.path.getctime(input)
     m, s = divmod(filetime - basetime, 60)
     while line:
         parts = line.strip().split(":")
@@ -61,9 +58,9 @@ for input in input_list:
         line = file.readline()
     file.close()
 
-os.chdir("/home/dp/fuzzing/chunk-afl-evaluation/coverage")
+os.chdir("/home/dp/Documents/fuzzing/chunk-afl-evaluation/coverage")
 cov_files_list = list(dict.keys())
-cov_files = open("chunk-afl","w+")
+cov_files = open("afl","w+")
 cov_files_list.sort()
 for file in cov_files_list:
     cov_lines_list = list(dict[file].keys())
