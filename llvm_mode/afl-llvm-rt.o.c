@@ -214,7 +214,9 @@ int __afl_persistent_loop(unsigned int max_cnt) {
     if (is_persistent) {
 
       memset(__afl_area_ptr, 0, MAP_SIZE);
+      memset(__state_map_ptr, 0, MAP_SIZE);
       __afl_area_ptr[0] = 1;
+      __state_map_ptr[0] = 1;
       __afl_prev_loc = 0;
     }
 
@@ -231,6 +233,7 @@ int __afl_persistent_loop(unsigned int max_cnt) {
       raise(SIGSTOP);
 
       __afl_area_ptr[0] = 1;
+      __state_map_ptr[0] = 1;
       __afl_prev_loc = 0;
 
       return 1;
@@ -242,6 +245,7 @@ int __afl_persistent_loop(unsigned int max_cnt) {
          dummy output region. */
 
       __afl_area_ptr = __afl_area_initial;
+      __state_map_ptr = __afl_area_initial;
 
     }
 
