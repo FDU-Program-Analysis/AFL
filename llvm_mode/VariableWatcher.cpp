@@ -21,7 +21,7 @@
 
 #include <unordered_set>
 
-#define MAX_PRE_LEN 5
+#define MAX_PRE_LEN 6
 
 using namespace llvm;
 
@@ -38,6 +38,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
     auto &CTX = M.getContext();
 
     IntegerType *Int8Ty = IntegerType::getInt8Ty(CTX);
+    IntegerType *Int16Ty = IntegerType::getInt16Ty(CTX);
     IntegerType *Int32Ty = IntegerType::getInt32Ty(CTX);
     IntegerType *Int64Ty = IntegerType::getInt64Ty(CTX);
 
@@ -92,80 +93,75 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
               Value *PtrValue = SI->getPointerOperand();
               StringRef VarName = PtrValue->getName();
-              uint64_t RandomNum;
-              uint64_t idx = -1;
+              uint16_t RandomNum;
+              uint16_t ConstIdx = -1;
+              Value * VarIdx = nullptr;
 
               IRBuilder<> Builder(SI->getNextNonDebugInstruction());
 
               outs() << "Store Inst: " << *SI << "\n";
 
-              // global varibale
+              /* global varibale */ 
               if (GlobalVariable *GV = dyn_cast<GlobalVariable>(PtrValue)) {
+                outs() << "1.\n";
                 outs() << "Global var: " << VarName << "\n";
-                // skip pointer
+                // skip global pointer
                 if (GV->getValueType()->isPointerTy()) {
                   continue;
                 }
 
-                // pointer declaration, not instrumented
+                /* local pointer declaration, not instrumented */
               } else if (PtrValue->getType()
                              ->getPointerElementType()
                              ->isPointerTy()) {
+                outs() << "2.\n";
                 VarName = SI->getPointerOperand()->getName();
                 outs() << "pointer name: " << VarName << "\n";
                 outs() << "not instrumented\n\n";
                 continue;
 
-                // indexed by variable
+                /* indexed by variable */
               } else if (auto *GEPI = dyn_cast<GetElementPtrInst>(PtrValue)) {
+                outs() << "3.\n";
                 VarName = GEPI->getPointerOperand()->getName();
                 outs() << "GEP Inst: " << *GEPI << "\n";
 
                 if (GEPI->getNumIndices() >= 2) {
                   if (auto * CI = dyn_cast<ConstantInt>(GEPI->getOperand(2))) {
-                    idx = CI->getZExtValue();
-                    outs() << "idx: " << idx << "\n";
+                    ConstIdx = CI->getZExtValue();
+                    outs() << "idx: " << ConstIdx << "\n";
 
                   } else {
-                    // array indexed by a variable
-                    Value *VarIdx = GEPI->getOperand(2);
-                    outs() << *VarIdx << "\n";
+                    Value *Idx = GEPI->getOperand(2);
+                    outs() << "var idx: " << *Idx << "\n";
+                    VarIdx = Idx;
                   }
                 }
 
                 if (auto *PO = dyn_cast<GEPOperator>(GEPI->getPointerOperand())) {
                   VarName = PO->getPointerOperand()->getName();
-                  outs() << "GEP Inst: " << *PO << "\n";
+                  outs() << "GEP Operator Inst: " << *PO << "\n";
                 }
 
                 while (auto *PI = dyn_cast<GetElementPtrInst>(GEPI->getPointerOperand())) {
                   GEPI = PI;
                   VarName = GEPI->getPointerOperand()->getName();
-                  outs() << "GEP Inst: " << *GEPI << "\n";
+                  outs() << "GEP2 Inst: " << *GEPI << "\n";
                   if (GEPI->getNumIndices() >= 2) {
                     if (auto *CI = dyn_cast<ConstantInt>(GEPI->getOperand(2))) {
-                      if (idx == -1) {
-                        idx = CI->getZExtValue();
+                      if (ConstIdx == -1) {
+                        ConstIdx = CI->getZExtValue();
                       } else {
-                        idx <<= 1;
-                        idx ^= CI->getZExtValue();
+                        ConstIdx <<= 1;
+                        ConstIdx ^= CI->getZExtValue();
                       }
                     } else {
-                      Value *VarIdx = GEPI->getOperand(2);
-                      outs() << *VarIdx << "\n";
+                      Value *Idx = GEPI->getOperand(2);
+                      outs() << *Idx << "\n";
+                      // TODO: xor inst
                     }
                   }
                 }
-
-                // prev inst for debug
-                // outs() << "Pre Inst:\n";
-                // Instruction *II = SI;
-                // for (int i = 1; i <= MAX_PRE_LEN; ++i) {
-                //   if (!II) break;
-                //   II = II->getPrevNonDebugInstruction();
-                //   outs() << *II << "\n";
-                // }
-                // outs() << "\n";
 
                 while(VarName == "") {
                   if (auto *LI = dyn_cast<LoadInst>(GEPI->getPointerOperand())) {
@@ -180,8 +176,19 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
                 outs() << "Variable Index: " << VarName << "\n";
 
+                // prev inst for debug
+                outs() << "Pre Inst:\n";
+                Instruction *II = SI;
+                for (int i = 1; i <= MAX_PRE_LEN; ++i) {
+                  if (!II) break;
+                  II = II->getPrevNonDebugInstruction();
+                  outs() << *II << "\n";
+                }
+                outs() << "\n";
+
                 // indexed by constant
               } else if (auto *GEPCstI = dyn_cast<GEPOperator>(PtrValue)) {
+                outs() << "4.\n";
                 VarName = GEPCstI->getPointerOperand()->getName();
 
                 unsigned Indices = GEPCstI->getNumIndices();
@@ -189,24 +196,19 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                   outs() << *(GEPCstI->getOperand(i)) << " ";
                   if (auto *CI = dyn_cast<ConstantInt>(GEPCstI->getOperand(i))) {
                     if (i == 2) 
-                      idx = CI->getZExtValue();
+                      ConstIdx = CI->getZExtValue();
                     else {
-                      idx <<= 1;
-                      idx ^= CI->getZExtValue();
+                      ConstIdx <<= 1;
+                      ConstIdx ^= CI->getZExtValue();
                     } 
                   }
-                  outs() << "idx: " << idx << "\n";
+                  outs() << "idx: " << ConstIdx << "\n";
                 }
                 outs() << "Const Index: " << VarName << "\n";
-                outs() << "GEP Const Inst: " << *GEPCstI << "\n";
+                outs() << "GEP Operator Inst: " << *GEPCstI << "\n";
 
               } else {
-                if (LoadInst *LI = dyn_cast<LoadInst>(PtrValue)) {
-                  VarName = LI->getPointerOperand()->getName();
-                  outs() << VarName << "\n";
-                  outs() << *LI << "\n";
-                  outs() << *SI << "\n";
-                }
+                outs() << "\nother situation\n";
               }
 
               if (GlobalVarsSet.count(VarName)) {
@@ -225,6 +227,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                        << LocalVarsSet.lookup(VarName) << "\n\n";
               }
 
+
               // instrumentation
               // load current value
               LoadInst *Load = Builder.CreateLoad(PtrValue);
@@ -234,43 +237,73 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               
               // casting different type into int
               Value *Cast = nullptr;
-              if (!(Load->getPointerOperandType()->getPointerElementType()->isIntegerTy())) {
-                switch (auto typeId = Load->getPointerOperandType()->getPointerElementType()->getTypeID())
-                {
-                  case Type::FloatTyID:
-                    outs() << "float type cast\n";
-                    Cast = Builder.CreateBitCast(Load, Int32Ty);
-                    Cast = Builder.CreateZExt(Cast, Int64Ty);
-                    break;
-                  
-                  case Type::DoubleTyID:
-                    outs() << "double type cast\n";
-                    Cast = Builder.CreateBitCast(Load, Int64Ty);
-                    break;
-                
-                  default:
-                    outs() << "other type: " << typeId << "\n";
-                    break;
-                }
-                //Cast = Builder.CreateBitCast(Load, Type::IntegerTyID);
-              } else {
-                if (Load->getPointerOperandType()->getPointerElementType()->getIntegerBitWidth() != 64) {
-                  Cast =  Builder.CreateSExt(Load, Int64Ty);
-                }
+              Type *LoadTy = Load->getPointerOperandType()->getPointerElementType(); 
+              switch (LoadTy->getTypeID())
+              {
+              case Type::FloatTyID:
+                outs() << "float type\n";
+                Cast = Builder.CreateBitCast(Load, Int32Ty);
+                break;
+              
+              case Type::DoubleTyID:
+                outs() << "double type\n";
+                Cast = Builder.CreateBitCast(Load, Int64Ty);
+                break;
+
+              case Type::IntegerTyID:
+               outs() << "integer type\n";
+               Cast = Load;
+               break;
+
+              default:
+                outs() << "other type: " << LoadTy->getTypeID() << "\n";
+                break;
               }
+
+              // transform bitwidth to int16 type
+              switch (Cast->getType()->getIntegerBitWidth())
+                {
+                case 64: {
+                  //Cast = Builder.CreateTrunc(Cast, Int16Ty);
+                  Value *tmp = Cast;
+                  for (int i = 3; i >= 0; --i) {
+                    Value *Part = Builder.CreateLShr(tmp, i*16);
+                    outs() << "Part: " << *Part << "\n";
+                    Part = Builder.CreateTrunc(Part, Int16Ty);
+                    if (i == 3) Cast = Part;
+                    else Cast = Builder.CreateXor(Cast, Part);
+                    outs() << "Cast: " << *Cast << "\n";
+                  }
+                }
+                  break;
+
+                case 32: {
+                  // Cast = Builder.CreateTrunc(Cast, Int16Ty);
+                  Value *LV = Builder.CreateLShr(Cast, 16);
+                  LV = Builder.CreateTrunc(LV, Int16Ty);
+                  Value *RV = Builder.CreateTrunc(Cast, Int16Ty);
+                  Cast = Builder.CreateXor(LV, RV);
+                  break;
+                }
+                  
+                case 16:
+                  break;
+
+                default:
+                  Cast = Builder.CreateZExt(Load, Int16Ty);
+                  break;
+                }
               outs() << "casting type\n";
 
               // caculating index
-              if (idx != -1) {
-                RandomNum += idx;
+              if (ConstIdx != -1) {
+                RandomNum ^= ConstIdx;
               }
 
-              ConstantInt *VarNum = ConstantInt::get(Int64Ty, RandomNum);
+              ConstantInt *Num = ConstantInt::get(Int16Ty, RandomNum);
               Value *Xor = nullptr;
               if (Cast != nullptr) {
-                Xor = Builder.CreateXor(Cast, VarNum);
-              } else {
-                Xor = Builder.CreateXor(Load, VarNum);  
+                Xor = Builder.CreateXor(Cast, Num);
               }
               outs() << "calc index\n\n";
               
