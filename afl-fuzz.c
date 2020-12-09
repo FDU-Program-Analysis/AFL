@@ -37,10 +37,6 @@
 #endif
 #define _FILE_OFFSET_BITS 64
 
-#ifndef STATE_VAR
-#define STATE_VAR
-#endif
-
 #include "config.h"
 #include "types.h"
 #include "debug.h"
@@ -2384,7 +2380,7 @@ static u8 run_target(char** argv, u32 timeout) {
   static u64 exec_ms = 0;
 
   int status = 0;
-  u32 tb4;
+  u32 tb4[2];
 
   child_timed_out = 0;
 
@@ -2476,6 +2472,9 @@ static u8 run_target(char** argv, u32 timeout) {
          falling through. */
 
       *(u32*)trace_bits = EXEC_FAIL_SIG;
+      #ifdef STATE_VAR
+      *(u32*)state_bits = EXEC_FAIL_SIG;
+      #endif
       exit(0);
 
     }
@@ -2521,9 +2520,7 @@ static u8 run_target(char** argv, u32 timeout) {
   } else {
 
     s32 res;
-
     if ((res = read(fsrv_st_fd, &status, 4)) != 4) {
-
       if (stop_soon) return 0;
       RPFATAL(res, "Unable to communicate with fork server (OOM?)");
 
@@ -2550,7 +2547,10 @@ static u8 run_target(char** argv, u32 timeout) {
 
   MEM_BARRIER();
 
-  tb4 = *(u32*)trace_bits;
+  tb4[0] = *(u32*)trace_bits;
+  #ifdef STATE_VAR
+  tb4[1] = *(u32*)state_bits;
+  #endif
 
 #ifdef WORD_SIZE_64
   classify_counts((u64*)trace_bits);
@@ -2571,7 +2571,6 @@ static u8 run_target(char** argv, u32 timeout) {
     kill_signal = WTERMSIG(status);
 
     if (child_timed_out && kill_signal == SIGKILL) return FAULT_TMOUT;
-
     return FAULT_CRASH;
 
   }
@@ -2584,7 +2583,11 @@ static u8 run_target(char** argv, u32 timeout) {
     return FAULT_CRASH;
   }
 
-  if ((dumb_mode == 1 || no_forkserver) && tb4 == EXEC_FAIL_SIG)
+  #ifdef STATE_VAR
+  if ((dumb_mode == 1 || no_forkserver) && (tb4[0] == EXEC_FAIL_SIG || tb4[1] == EXEC_FAIL_SIG))
+  #else
+  if ((dumb_mode == 1 || no_forkserver) && tb4[0] == EXEC_FAIL_SIG)
+  #endif
     return FAULT_ERROR;
 
   /* It makes sense to account for the slowest units only if the testcase was run
@@ -7993,7 +7996,7 @@ int main(int argc, char** argv) {
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
-  while ((opt = getopt(argc, argv, "+i:o:f:m:b:t:T:dnCB:S:M:x:QV")) > 0)
+  while ((opt = getopt(argc, argv, "+i:o:f:m:b:t:T:dnsCB:S:M:x:QV")) > 0)
 
     switch (opt) {
 
@@ -8125,6 +8128,12 @@ int main(int argc, char** argv) {
         skip_deterministic = 1;
         use_splicing = 1;
         break;
+      
+      case 's':
+        #ifndef STATE_VAR
+        #define STATE_VAR
+        #endif
+        break;
 
       case 'B': /* load bitmap */
 
@@ -8177,10 +8186,6 @@ int main(int argc, char** argv) {
 
         /* Version number has been printed already, just quit. */
         exit(0);
-      case 's':
-        #ifndef STATE_VAR
-        #define STATE_VAR
-        #endif
 
       default:
 

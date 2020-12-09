@@ -58,8 +58,9 @@
    It will end up as .comm, so it shouldn't be too wasteful. */
 
 u8  __afl_area_initial[MAP_SIZE];
+u8  __afl_state_area_initial[MAP_SIZE];
 u8* __afl_area_ptr = __afl_area_initial;
-u8* __state_map_ptr = __afl_area_initial;
+u8* __state_map_ptr = __afl_state_area_initial;
 
 __thread u32 __afl_prev_loc;
 
@@ -245,7 +246,7 @@ int __afl_persistent_loop(unsigned int max_cnt) {
          dummy output region. */
 
       __afl_area_ptr = __afl_area_initial;
-      __state_map_ptr = __afl_area_initial;
+      __state_map_ptr = __afl_state_area_initial;
 
     }
 
