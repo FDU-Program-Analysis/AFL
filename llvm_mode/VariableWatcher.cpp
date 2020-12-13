@@ -47,19 +47,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
         new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
                            GlobalValue::ExternalLinkage, 0, "__state_map_ptr");
 
-    StringMap<unsigned int> GlobalVarsSet;
-    auto &GlobalList = M.getGlobalList();
-    outs() << "\nGLOBAL LIST\n";
-    for (auto &GV : GlobalList) {
-      if (GV.getMetadata("labyrinth.label.state_describing")) {
-        GlobalVarsSet.insert_or_assign(GV.getName(), AFL_R(MAP_SIZE));
-        outs() << GV.getName() << " : " << GlobalVarsSet.lookup(GV.getName())
-               << "\n";
-      }
-    }
-    outs() << "\n";
-
-    StringMap<unsigned int> LocalVarsSet;
+    std::map<Value*, uint16_t> VariableSet;
 
     // // declaration of printf
     // PointerType *PrintfArgTy = PointerType::getUnqual(Type::getInt8Ty(CTX));
@@ -98,148 +86,23 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               outs() << "pointer address: " << PtrValue << "\n";
 
               StringRef VarName = PtrValue->getName();
-              uint16_t RandomNum;
-              uint16_t ConstIdx = -1;
-              Value *VarIdx = nullptr;
-              bool first = false;
+              uint16_t RandomNum = AFL_R(MAP_SIZE);
 
               IRBuilder<> Builder(SI->getNextNonDebugInstruction());
 
               outs() << "Store Inst: " << *SI << "\n";
 
-              /* global varibale */
-              if (GlobalVariable *GV = dyn_cast<GlobalVariable>(PtrValue)) {
-                outs() << "1.\n";
-                outs() << "Global var: " << VarName << "\n";
-                // skip global pointer
-                if (GV->getValueType()->isPointerTy()) {
-                  continue;
-                }
-
-                /* local pointer declaration, not instrumented */
-              } else if (PtrValue->getType()
-                             ->getPointerElementType()
-                             ->isPointerTy()) {
-                outs() << "2.\n";
-                VarName = SI->getPointerOperand()->getName();
-                outs() << "pointer name: " << VarName << "\n";
-                outs() << "not instrumented\n\n";
-                continue;
-
-                /* indexed by variable */
-              } else if (auto *GEPI = dyn_cast<GetElementPtrInst>(PtrValue)) {
-                outs() << "3.\n";
-                VarName = GEPI->getPointerOperand()->getName();
-                outs() << "GEP Inst: " << *GEPI << "\n";
-
-                if (GEPI->getNumIndices() >= 2) {
-                  if (auto *CI = dyn_cast<ConstantInt>(GEPI->getOperand(2))) {
-                    ConstIdx = CI->getZExtValue();
-                    outs() << "idx: " << ConstIdx << "\n";
-
-                  } else {
-                    Value *Idx = GEPI->getOperand(2);
-                    outs() << "var idx: " << *Idx << "\n";
-                    VarIdx = Idx;
-                  }
-                }
-
-                if (auto *PO =
-                        dyn_cast<GEPOperator>(GEPI->getPointerOperand())) {
-                  VarName = PO->getPointerOperand()->getName();
-                  outs() << "GEP Operator Inst: " << *PO << "\n";
-                }
-
-                while (auto *PI = dyn_cast<GetElementPtrInst>(
-                           GEPI->getPointerOperand())) {
-                  GEPI = PI;
-                  VarName = GEPI->getPointerOperand()->getName();
-                  outs() << "GEP2 Inst: " << *GEPI << "\n";
-                  if (GEPI->getNumIndices() >= 2) {
-                    if (auto *CI = dyn_cast<ConstantInt>(GEPI->getOperand(2))) {
-                      if (ConstIdx == -1) {
-                        ConstIdx = CI->getZExtValue();
-                      } else {
-                        ConstIdx <<= 1;
-                        ConstIdx ^= CI->getZExtValue();
-                      }
-                    } else {
-                      Value *Idx = GEPI->getOperand(2);
-                      outs() << *Idx << "\n";
-                      // TODO: xor inst
-                    }
-                  }
-                }
-
-                while (VarName == "") {
-                  if (auto *LI =
-                          dyn_cast<LoadInst>(GEPI->getPointerOperand())) {
-                    VarName = LI->getPointerOperand()->getName();
-                    outs() << "VarName: " << VarName << "\n";
-                    if (auto *PI = dyn_cast<GetElementPtrInst>(
-                            LI->getPointerOperand())) {
-                      VarName = PI->getPointerOperand()->getName();
-                      GEPI = PI;
-                    }
-                  }
-                }
-
-                outs() << "Variable Index: " << VarName << "\n";
-
-                // prev inst for debug
-                outs() << "Pre Inst:\n";
-                Instruction *II = SI;
-                for (int i = 1; i <= MAX_PRE_LEN; ++i) {
-                  if (!II)
-                    break;
-                  II = II->getPrevNonDebugInstruction();
-                  outs() << *II << "\n";
-                }
-                outs() << "\n";
-
-                // indexed by constant
-              } else if (auto *GEPCstI = dyn_cast<GEPOperator>(PtrValue)) {
-                outs() << "4.\n";
-                VarName = GEPCstI->getPointerOperand()->getName();
-
-                unsigned Indices = GEPCstI->getNumIndices();
-                for (unsigned i = 2; i <= Indices; ++i) {
-                  outs() << *(GEPCstI->getOperand(i)) << " ";
-                  if (auto *CI =
-                          dyn_cast<ConstantInt>(GEPCstI->getOperand(i))) {
-                    if (i == 2)
-                      ConstIdx = CI->getZExtValue();
-                    else {
-                      ConstIdx <<= 1;
-                      ConstIdx ^= CI->getZExtValue();
-                    }
-                  }
-                  outs() << "idx: " << ConstIdx << "\n";
-                }
-                outs() << "Const Index: " << VarName << "\n";
-                outs() << "GEP Operator Inst: " << *GEPCstI << "\n";
+              if (VariableSet.find(PtrValue) != VariableSet.end()) {
+                outs() << "variable exist!\n";
+                RandomNum = VariableSet.at(PtrValue);
+                outs() << PtrValue << " : " << RandomNum << "\n";
 
               } else {
-                outs() << "\nother situation\n";
+                 RandomNum = AFL_R(MAP_SIZE);
+                 VariableSet.insert(std::pair<Value*, uint16_t>(PtrValue, RandomNum));
+                 outs() << PtrValue << " : " << RandomNum << "\n";             
               }
-
-              if (GlobalVarsSet.count(VarName)) {
-                RandomNum = GlobalVarsSet.lookup(VarName);
-                outs() << "Global Var ==> " << VarName << " : " << RandomNum
-                       << "\n\n";
-
-              } else {
-                if (!LocalVarsSet.count(VarName)) {
-                  RandomNum = AFL_R(MAP_SIZE);
-                  LocalVarsSet.insert_or_assign(VarName, RandomNum);
-                } else {
-                  RandomNum = LocalVarsSet.lookup(VarName);
-                  first = true;
-                }
-                outs() << "Local var ==> " << VarName << " : "
-                       << LocalVarsSet.lookup(VarName) << "\n\n";
-              }
-
+              
               // instrumentation
               // load current value
               LoadInst *Load = Builder.CreateLoad(PtrValue);
@@ -247,7 +110,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                                 MDNode::get(CTX, None));
               outs() << "load current value\n";
 
-              // casting different type into int
+              // // casting different type into int
               Value *Cast = nullptr;
               Type *LoadTy =
                   Load->getPointerOperandType()->getPointerElementType();
@@ -269,7 +132,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
               default:
                 outs() << "other type: " << LoadTy->getTypeID() << "\n";
-                break;
+                continue;
               }
 
               // transform bitwidth to int16 type
@@ -306,17 +169,12 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
               outs() << "casting type\n";
 
-              // caculating index
-              if (ConstIdx != -1) {
-                RandomNum ^= ConstIdx;
-              }
-
               ConstantInt *Num = ConstantInt::get(Int16Ty, RandomNum);
               Value *Xor = nullptr;
               if (Cast != nullptr) {
                 Xor = Builder.CreateXor(Cast, Num);
               }
-              outs() << "calc index\n\n";
+              outs() << "calc index\n";
 
               // inject a call to printf
               // Value *FormatStrPtr =
@@ -371,6 +229,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
               // }
 
+              outs() << "\n";
               inst_count++;
             }
           }
