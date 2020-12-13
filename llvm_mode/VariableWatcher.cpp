@@ -16,8 +16,8 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include <unordered_set>
 
@@ -61,12 +61,11 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
     StringMap<unsigned int> LocalVarsSet;
 
-    // declaration of printf
+    // // declaration of printf
     // PointerType *PrintfArgTy = PointerType::getUnqual(Type::getInt8Ty(CTX));
-    // FunctionType *PrintfTy = FunctionType::get(
-    //     IntegerType::getInt32Ty(CTX),
-    //     PrintfArgTy,
-    //     /*IsVarArgs=*/true);
+    // FunctionType *PrintfTy =
+    //     FunctionType::get(IntegerType::getInt32Ty(CTX), PrintfArgTy,
+    //                       /*IsVarArgs=*/true);
     // FunctionCallee Printf = M.getOrInsertFunction("printf", PrintfTy);
 
     // // set attributes
@@ -76,12 +75,16 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
     // PrintfF->addParamAttr(0, Attribute::ReadOnly);
 
     // // inject a global variable that will hold the printf format string
-    // Constant *PrintfFormatStr = ConstantDataArray::getString(CTX, 
-    //     "update bitmap: SHM[VarNum: %-6d ^ Value: %-6d = Index: %-6d]\n");
-    // Constant *PrintfFormatStrVar = 
-    //     M.getOrInsertGlobal("PrintfFormatStr", PrintfFormatStr->getType());
-    // dyn_cast<GlobalVariable>(PrintfFormatStrVar)->setInitializer(PrintfFormatStr);
-
+    // Constant *IntFormatStr =
+    //     ConstantDataArray::getString(CTX, "%lld => %lld\n");
+    // Constant *FloatFormatStr =
+    //     ConstantDataArray::getString(CTX, "%lf => %lf\n");
+    // Constant *IntFormatStrVar =
+    //     M.getOrInsertGlobal("IntFormatStr", IntFormatStr->getType());
+    // dyn_cast<GlobalVariable>(IntFormatStrVar)->setInitializer(IntFormatStr);
+    // Constant *FloatFormatStrVar =
+    //     M.getOrInsertGlobal("FloatFormatStr", FloatFormatStr->getType());
+    // dyn_cast<GlobalVariable>(FloatFormatStrVar)->setInitializer(FloatFormatStr);
 
     for (auto &F : M) {
       for (auto &BB : F) {
@@ -92,16 +95,19 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                     SI->getMetadata("labyrinth.label.state_describing")) {
 
               Value *PtrValue = SI->getPointerOperand();
+              outs() << "pointer address: " << PtrValue << "\n";
+
               StringRef VarName = PtrValue->getName();
               uint16_t RandomNum;
               uint16_t ConstIdx = -1;
-              Value * VarIdx = nullptr;
+              Value *VarIdx = nullptr;
+              bool first = false;
 
               IRBuilder<> Builder(SI->getNextNonDebugInstruction());
 
               outs() << "Store Inst: " << *SI << "\n";
 
-              /* global varibale */ 
+              /* global varibale */
               if (GlobalVariable *GV = dyn_cast<GlobalVariable>(PtrValue)) {
                 outs() << "1.\n";
                 outs() << "Global var: " << VarName << "\n";
@@ -127,7 +133,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                 outs() << "GEP Inst: " << *GEPI << "\n";
 
                 if (GEPI->getNumIndices() >= 2) {
-                  if (auto * CI = dyn_cast<ConstantInt>(GEPI->getOperand(2))) {
+                  if (auto *CI = dyn_cast<ConstantInt>(GEPI->getOperand(2))) {
                     ConstIdx = CI->getZExtValue();
                     outs() << "idx: " << ConstIdx << "\n";
 
@@ -138,12 +144,14 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                   }
                 }
 
-                if (auto *PO = dyn_cast<GEPOperator>(GEPI->getPointerOperand())) {
+                if (auto *PO =
+                        dyn_cast<GEPOperator>(GEPI->getPointerOperand())) {
                   VarName = PO->getPointerOperand()->getName();
                   outs() << "GEP Operator Inst: " << *PO << "\n";
                 }
 
-                while (auto *PI = dyn_cast<GetElementPtrInst>(GEPI->getPointerOperand())) {
+                while (auto *PI = dyn_cast<GetElementPtrInst>(
+                           GEPI->getPointerOperand())) {
                   GEPI = PI;
                   VarName = GEPI->getPointerOperand()->getName();
                   outs() << "GEP2 Inst: " << *GEPI << "\n";
@@ -163,16 +171,18 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                   }
                 }
 
-                while(VarName == "") {
-                  if (auto *LI = dyn_cast<LoadInst>(GEPI->getPointerOperand())) {
+                while (VarName == "") {
+                  if (auto *LI =
+                          dyn_cast<LoadInst>(GEPI->getPointerOperand())) {
                     VarName = LI->getPointerOperand()->getName();
                     outs() << "VarName: " << VarName << "\n";
-                    if (auto *PI = dyn_cast<GetElementPtrInst>(LI->getPointerOperand())) {
+                    if (auto *PI = dyn_cast<GetElementPtrInst>(
+                            LI->getPointerOperand())) {
                       VarName = PI->getPointerOperand()->getName();
                       GEPI = PI;
                     }
                   }
-                }                               
+                }
 
                 outs() << "Variable Index: " << VarName << "\n";
 
@@ -180,7 +190,8 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                 outs() << "Pre Inst:\n";
                 Instruction *II = SI;
                 for (int i = 1; i <= MAX_PRE_LEN; ++i) {
-                  if (!II) break;
+                  if (!II)
+                    break;
                   II = II->getPrevNonDebugInstruction();
                   outs() << *II << "\n";
                 }
@@ -194,13 +205,14 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                 unsigned Indices = GEPCstI->getNumIndices();
                 for (unsigned i = 2; i <= Indices; ++i) {
                   outs() << *(GEPCstI->getOperand(i)) << " ";
-                  if (auto *CI = dyn_cast<ConstantInt>(GEPCstI->getOperand(i))) {
-                    if (i == 2) 
+                  if (auto *CI =
+                          dyn_cast<ConstantInt>(GEPCstI->getOperand(i))) {
+                    if (i == 2)
                       ConstIdx = CI->getZExtValue();
                     else {
                       ConstIdx <<= 1;
                       ConstIdx ^= CI->getZExtValue();
-                    } 
+                    }
                   }
                   outs() << "idx: " << ConstIdx << "\n";
                 }
@@ -222,11 +234,11 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                   LocalVarsSet.insert_or_assign(VarName, RandomNum);
                 } else {
                   RandomNum = LocalVarsSet.lookup(VarName);
+                  first = true;
                 }
                 outs() << "Local var ==> " << VarName << " : "
                        << LocalVarsSet.lookup(VarName) << "\n\n";
               }
-
 
               // instrumentation
               // load current value
@@ -234,26 +246,26 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               Load->setMetadata(M.getMDKindID("nosanitize"),
                                 MDNode::get(CTX, None));
               outs() << "load current value\n";
-              
+
               // casting different type into int
               Value *Cast = nullptr;
-              Type *LoadTy = Load->getPointerOperandType()->getPointerElementType(); 
-              switch (LoadTy->getTypeID())
-              {
+              Type *LoadTy =
+                  Load->getPointerOperandType()->getPointerElementType();
+              switch (LoadTy->getTypeID()) {
               case Type::FloatTyID:
                 outs() << "float type\n";
                 Cast = Builder.CreateBitCast(Load, Int32Ty);
                 break;
-              
+
               case Type::DoubleTyID:
                 outs() << "double type\n";
                 Cast = Builder.CreateBitCast(Load, Int64Ty);
                 break;
 
               case Type::IntegerTyID:
-               outs() << "integer type\n";
-               Cast = Load;
-               break;
+                outs() << "integer type\n";
+                Cast = Load;
+                break;
 
               default:
                 outs() << "other type: " << LoadTy->getTypeID() << "\n";
@@ -261,38 +273,37 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               }
 
               // transform bitwidth to int16 type
-              switch (Cast->getType()->getIntegerBitWidth())
-                {
-                case 64: {
-                  //Cast = Builder.CreateTrunc(Cast, Int16Ty);
-                  Value *tmp = Cast;
-                  for (int i = 3; i >= 0; --i) {
-                    Value *Part = Builder.CreateLShr(tmp, i*16);
-                    outs() << "Part: " << *Part << "\n";
-                    Part = Builder.CreateTrunc(Part, Int16Ty);
-                    if (i == 3) Cast = Part;
-                    else Cast = Builder.CreateXor(Cast, Part);
-                    outs() << "Cast: " << *Cast << "\n";
-                  }
+              switch (Cast->getType()->getIntegerBitWidth()) {
+              case 64: {
+                Value *tmp = Cast;
+                for (int i = 3; i >= 0; --i) {
+                  Value *Part = Builder.CreateLShr(tmp, i * 16);
+                  outs() << "Part: " << *Part << "\n";
+                  Part = Builder.CreateTrunc(Part, Int16Ty);
+                  if (i == 3)
+                    Cast = Part;
+                  else
+                    Cast = Builder.CreateXor(Cast, Part);
+                  outs() << "Cast: " << *Cast << "\n";
                 }
-                  break;
+              } break;
 
-                case 32: {
-                  // Cast = Builder.CreateTrunc(Cast, Int16Ty);
-                  Value *LV = Builder.CreateLShr(Cast, 16);
-                  LV = Builder.CreateTrunc(LV, Int16Ty);
-                  Value *RV = Builder.CreateTrunc(Cast, Int16Ty);
-                  Cast = Builder.CreateXor(LV, RV);
-                  break;
-                }
-                  
-                case 16:
-                  break;
+              case 32: {
+                Value *LV = Builder.CreateLShr(Cast, 16);
+                LV = Builder.CreateTrunc(LV, Int16Ty);
+                Value *RV = Builder.CreateTrunc(Cast, Int16Ty);
+                Cast = Builder.CreateXor(LV, RV);
+                break;
+              }
 
-                default:
-                  Cast = Builder.CreateZExt(Load, Int16Ty);
-                  break;
-                }
+              case 16:
+                break;
+
+              default:
+                Cast = Builder.CreateZExt(Load, Int16Ty);
+                break;
+              }
+
               outs() << "casting type\n";
 
               // caculating index
@@ -306,10 +317,11 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                 Xor = Builder.CreateXor(Cast, Num);
               }
               outs() << "calc index\n\n";
-              
+
               // inject a call to printf
-              // Value *FormatStrPtr = 
-              //     Builder.CreatePointerCast(PrintfFormatStrVar, PrintfArgTy, "formatStr");
+              // Value *FormatStrPtr =
+              //     Builder.CreatePointerCast(PrintfFormatStrVar, PrintfArgTy,
+              //     "formatStr");
               // Builder.CreateCall(Printf, {FormatStrPtr, VarNum, Load, Xor});
 
               LoadInst *MapPtr = Builder.CreateLoad(AFLMapPtr);
@@ -326,6 +338,38 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               Builder.CreateStore(Inc, MapPtrIdx)
                   ->setMetadata(M.getMDKindID("nosanitize"),
                                 MDNode::get(CTX, None));
+
+              /* log */
+              // if (!first) {
+              //   // compare the value
+              //   IRBuilder<> BeforeB(SI);
+              //   IRBuilder<> AfterB(SI->getNextNonDebugInstruction());
+              //   Value *before = BeforeB.CreateLoad(PtrValue);
+              //   Value *after = AfterB.CreateLoad(PtrValue);
+
+              //   Type *ValueTy = after->getType();
+              //   Value *CmpValue = nullptr;
+              //   switch (ValueTy->getTypeID()) {
+              //   case Type::IntegerTyID:
+              //     CmpValue = AfterB.CreateICmpNE(before, after);
+              //     break;
+
+              //   case Type::FloatTyID:
+              //   case Type::DoubleTyID:
+              //     CmpValue = AfterB.CreateFCmpUEQ(before, after);
+              //     break;
+
+              //   default:
+              //     outs() << "[LOG]: other type!\n";
+              //     break;
+              //   }
+
+              //   if (auto *Cmp = dyn_cast<CmpInst>(CmpValue)) {
+              //     SplitBlockAndInsertIfThen(CmpValue, Cmp->getNextNonDebugInstruction(), false, nullptr, nullptr, nullptr, nullptr);
+                  
+              //   }                
+
+              // }
 
               inst_count++;
             }
@@ -406,8 +450,10 @@ static void registerVariableWatcherPass(const PassManagerBuilder &,
   PM.add(new LegacyVariableWatcher());
 }
 
-static RegisterStandardPasses RegisterVariableWatcherPass(
-    PassManagerBuilder::EP_OptimizerLast, registerVariableWatcherPass);
+static RegisterStandardPasses
+    RegisterVariableWatcherPass(PassManagerBuilder::EP_OptimizerLast,
+                                registerVariableWatcherPass);
 
-static RegisterStandardPasses RegisterVariableWatcherPass0(
-  PassManagerBuilder::EP_EnabledOnOptLevel0, registerVariableWatcherPass);
+static RegisterStandardPasses
+    RegisterVariableWatcherPass0(PassManagerBuilder::EP_EnabledOnOptLevel0,
+                                 registerVariableWatcherPass);
