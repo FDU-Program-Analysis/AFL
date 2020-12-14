@@ -23,13 +23,13 @@ BIN_PATH     = $(PREFIX)/bin
 VERSION     = $(shell grep '^\#define VERSION ' ../config.h | cut -d '"' -f2)
 
 LLVM_CONFIG ?= llvm-config
-LABYRINTH_CC ?= /home/mondaylord/Documents/state-machine-inference/variable-extractor/install/bin/clang
-LABYRINTH_CXX ?= /home/mondaylord/Documents/state-machine-inference/variable-extractor/install/bin/clang++
+LABYRINTH_CC ?= labyrinth-clang
+LABYRINTH_CXX ?= labyrinth-clang++
 
 CFLAGS      ?= -O3 -funroll-loops
 CFLAGS      += -Wall -D_FORTIFY_SOURCE=2 -g -Wno-pointer-sign \
                -DAFL_PATH=\"$(HELPER_PATH)\" -DBIN_PATH=\"$(BIN_PATH)\" \
-               -DVERSION=\"$(VERSION)\" 
+               -DVERSION=\"$(VERSION)\"
 ifdef AFL_TRACE_PC
   CFLAGS    += -DUSE_TRACE_PC=1
 endif
@@ -116,5 +116,5 @@ all_done: test_build
 .NOTPARALLEL: clean
 
 clean:
-	rm -f *.o *.so *~ a.out core core.[1-9][0-9]* test-instr .test-instr0 .test-instr1 
+	rm -f *.o *.so *~ a.out core core.[1-9][0-9]* test-instr .test-instr0 .test-instr1
 	rm -f $(PROGS) ../afl-clang-fast++
