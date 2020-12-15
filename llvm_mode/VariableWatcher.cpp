@@ -36,6 +36,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
     int inst_count = 0;
     bool Instrumented = false;
     auto &CTX = M.getContext();
+    int VarNum = 0;
 
     IntegerType *Int8Ty = IntegerType::getInt8Ty(CTX);
     IntegerType *Int16Ty = IntegerType::getInt16Ty(CTX);
@@ -49,35 +50,51 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
     std::map<Value*, uint16_t> VariableSet;
 
-    // // declaration of printf
-    // PointerType *PrintfArgTy = PointerType::getUnqual(Type::getInt8Ty(CTX));
-    // FunctionType *PrintfTy =
-    //     FunctionType::get(IntegerType::getInt32Ty(CTX), PrintfArgTy,
-    //                       /*IsVarArgs=*/true);
-    // FunctionCallee Printf = M.getOrInsertFunction("printf", PrintfTy);
+    // declaration of printf
+    PointerType *PrintfArgTy = PointerType::getUnqual(Type::getInt8Ty(CTX));
+    FunctionType *PrintfTy =
+        FunctionType::get(IntegerType::getInt32Ty(CTX), PrintfArgTy,
+                          /*IsVarArgs=*/true);
+    FunctionCallee Printf = M.getOrInsertFunction("printf", PrintfTy);
 
-    // // set attributes
-    // Function *PrintfF = dyn_cast<Function>(Printf.getCallee());
-    // PrintfF->setDoesNotThrow();
-    // PrintfF->addParamAttr(0, Attribute::NoCapture);
-    // PrintfF->addParamAttr(0, Attribute::ReadOnly);
+    // set attributes
+    Function *PrintfF = dyn_cast<Function>(Printf.getCallee());
+    PrintfF->setDoesNotThrow();
+    PrintfF->addParamAttr(0, Attribute::NoCapture);
+    PrintfF->addParamAttr(0, Attribute::ReadOnly);
 
-    // // inject a global variable that will hold the printf format string
-    // Constant *IntFormatStr =
-    //     ConstantDataArray::getString(CTX, "%lld => %lld\n");
-    // Constant *FloatFormatStr =
-    //     ConstantDataArray::getString(CTX, "%lf => %lf\n");
-    // Constant *IntFormatStrVar =
-    //     M.getOrInsertGlobal("IntFormatStr", IntFormatStr->getType());
-    // dyn_cast<GlobalVariable>(IntFormatStrVar)->setInitializer(IntFormatStr);
-    // Constant *FloatFormatStrVar =
-    //     M.getOrInsertGlobal("FloatFormatStr", FloatFormatStr->getType());
-    // dyn_cast<GlobalVariable>(FloatFormatStrVar)->setInitializer(FloatFormatStr);
+    // inject a global variable that will hold the printf format string
+    Constant *IntFormatStr =
+        ConstantDataArray::getString(CTX, "[log] file: %s name: %s value: %lld => %lld\n");
+    Constant *FltFormatStr =
+        ConstantDataArray::getString(CTX, "[log] file: %s name: %s value: %lf => %lf\n");
 
+    Constant *IntFormatStrVar =
+        M.getOrInsertGlobal("IntFormatStr", IntFormatStr->getType());
+    if (auto *Var = dyn_cast<GlobalVariable>(IntFormatStrVar)) {
+      if (!Var->hasInitializer())
+        Var->setInitializer(IntFormatStr);
+      Var->setLinkage(GlobalValue::PrivateLinkage);
+    }
+
+    Constant *FltFormatStrVar =
+        M.getOrInsertGlobal("FltFormatStr", FltFormatStr->getType());
+    if (auto *Var = dyn_cast<GlobalVariable>(FltFormatStrVar)) {
+      if (!Var->hasInitializer())
+        Var->setInitializer(FltFormatStr);
+      Var->setLinkage(GlobalValue::PrivateLinkage);
+    }
+
+    Constant *ModuleName = ConstantDataArray::getString(CTX, M.getModuleIdentifier());
+    Constant *ModuleNameVar = M.getOrInsertGlobal("ModuleName", ModuleName->getType());
+    dyn_cast<GlobalVariable>(ModuleNameVar)->setInitializer(ModuleName);
+    dyn_cast<GlobalVariable>(ModuleNameVar)->setLinkage(GlobalValue::PrivateLinkage);
+
+    outs() << "module: " << M.getModuleIdentifier() << "\n";
+    
     for (auto &F : M) {
-      for (auto &BB : F) {
+      for (auto &BB : F) {        
         for (auto &Inst : BB) {
-
           if (StoreInst *SI = dyn_cast<StoreInst>(&Inst)) {
             if (MDNode *N =
                     SI->getMetadata("labyrinth.label.state_describing")) {
@@ -85,30 +102,37 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               Value *PtrValue = SI->getPointerOperand();
               outs() << "pointer address: " << PtrValue << "\n";
 
-              StringRef VarName = PtrValue->getName();
-              uint16_t RandomNum = AFL_R(MAP_SIZE);
+              uint16_t RandomNum;
+              bool first = false;
+              Instruction *Next = SI->getNextNonDebugInstruction();
+              IRBuilder<> Builder(Next);
 
-              IRBuilder<> Builder(SI->getNextNonDebugInstruction());
+              // get variable name
+              StringRef VarName = PtrValue->getName();
+              if (VarName == "") {
+                // TODO: 
+              }
 
               outs() << "Store Inst: " << *SI << "\n";
 
               if (VariableSet.find(PtrValue) != VariableSet.end()) {
-                outs() << "variable exist!\n";
                 RandomNum = VariableSet.at(PtrValue);
-                outs() << PtrValue << " : " << RandomNum << "\n";
+                outs() <<"name: " << VarName <<" : " << PtrValue << " : " << RandomNum << "\n";
 
               } else {
-                 RandomNum = AFL_R(MAP_SIZE);
-                 VariableSet.insert(std::pair<Value*, uint16_t>(PtrValue, RandomNum));
-                 outs() << PtrValue << " : " << RandomNum << "\n";             
+                RandomNum = AFL_R(MAP_SIZE);
+                VariableSet.insert(std::pair<Value*, uint16_t>(PtrValue, RandomNum));
+                first = true;
+                outs() << "variabel first appearance\n"; 
+                outs() <<"name: " << VarName <<" : " << PtrValue << " : " << RandomNum << "\n";
               }
               
-              // instrumentation
+              /* instrumentation */
               // load current value
               LoadInst *Load = Builder.CreateLoad(PtrValue);
               Load->setMetadata(M.getMDKindID("nosanitize"),
                                 MDNode::get(CTX, None));
-              outs() << "load current value\n";
+              //outs() << "load current value\n";
 
               // // casting different type into int
               Value *Cast = nullptr;
@@ -167,20 +191,14 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                 break;
               }
 
-              outs() << "casting type\n";
+              //outs() << "casting type\n";
 
               ConstantInt *Num = ConstantInt::get(Int16Ty, RandomNum);
               Value *Xor = nullptr;
               if (Cast != nullptr) {
                 Xor = Builder.CreateXor(Cast, Num);
               }
-              outs() << "calc index\n";
-
-              // inject a call to printf
-              // Value *FormatStrPtr =
-              //     Builder.CreatePointerCast(PrintfFormatStrVar, PrintfArgTy,
-              //     "formatStr");
-              // Builder.CreateCall(Printf, {FormatStrPtr, VarNum, Load, Xor});
+              //outs() << "calc index\n";
 
               LoadInst *MapPtr = Builder.CreateLoad(AFLMapPtr);
               MapPtr->setMetadata(M.getMDKindID("nosanitize"),
@@ -198,42 +216,57 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                                 MDNode::get(CTX, None));
 
               /* log */
-              // if (!first) {
-              //   // compare the value
-              //   IRBuilder<> BeforeB(SI);
-              //   IRBuilder<> AfterB(SI->getNextNonDebugInstruction());
-              //   Value *before = BeforeB.CreateLoad(PtrValue);
-              //   Value *after = AfterB.CreateLoad(PtrValue);
+                // compare the value
+                IRBuilder<> IRB(SI);
+                auto *before = IRB.CreateLoad(PtrValue);
+                IRB.SetInsertPoint(SI->getNextNonDebugInstruction());
+                auto *after = IRB.CreateLoad(PtrValue);
 
-              //   Type *ValueTy = after->getType();
-              //   Value *CmpValue = nullptr;
-              //   switch (ValueTy->getTypeID()) {
-              //   case Type::IntegerTyID:
-              //     CmpValue = AfterB.CreateICmpNE(before, after);
-              //     break;
+                Type *ValueTy = after->getType();
+                Value *CmpValue = nullptr;
+                Value* FormatStrPtr = nullptr;
+                switch (ValueTy->getTypeID()) {
+                case Type::IntegerTyID:
+                  CmpValue = IRB.CreateICmpNE(before, after);
+                  FormatStrPtr = IRB.CreatePointerCast(IntFormatStrVar, PrintfArgTy, "IntFormatStr");
+                  break;
 
-              //   case Type::FloatTyID:
-              //   case Type::DoubleTyID:
-              //     CmpValue = AfterB.CreateFCmpUEQ(before, after);
-              //     break;
+                case Type::FloatTyID:
+                case Type::DoubleTyID:
+                  CmpValue = IRB.CreateFCmpUEQ(before, after);
+                  FormatStrPtr = IRB.CreatePointerCast(FltFormatStrVar, PrintfArgTy, "FltFormatStr");
+                  break;
 
-              //   default:
-              //     outs() << "[LOG]: other type!\n";
-              //     break;
-              //   }
+                default:
+                  outs() << "other type!\n";
+                  break;
+                }
 
-              //   if (auto *Cmp = dyn_cast<CmpInst>(CmpValue)) {
-              //     SplitBlockAndInsertIfThen(CmpValue, Cmp->getNextNonDebugInstruction(), false, nullptr, nullptr, nullptr, nullptr);
-                  
-              //   }                
+                Instruction *Split = dyn_cast<Instruction>(CmpValue)->getNextNonDebugInstruction();
+                auto *ThenTerm = SplitBlockAndInsertIfThen(CmpValue, Split, false, nullptr, nullptr, nullptr, nullptr);
 
-              // }
+                IRB.SetInsertPoint(ThenTerm);
+                Value *ModuleNamePtr = IRB.CreatePointerCast(ModuleNameVar, PrintfArgTy, "ModuleName");
 
-              outs() << "\n";
+                 VarNum++;
+                 Constant *VarNameStr = ConstantDataArray::getString(CTX, VarName.str());
+                 Constant *VarNameStrVar = M.getOrInsertGlobal(".name" + std::to_string(VarNum), VarNameStr->getType());
+                 if (auto *Var = dyn_cast<GlobalVariable>(VarNameStrVar)) {
+                    if (!Var->hasInitializer())
+                    Var->setInitializer(VarNameStr);
+                    Var->setLinkage(GlobalValue::PrivateLinkage);
+                  }
+
+                //  dyn_cast<GlobalVariable>(VarNameStrVar)->setInitializer(VarNameStr);
+                //  dyn_cast<GlobalVariable>(ModuleNameVar)->setLinkage(GlobalValue::PrivateLinkage);
+                Value *VarNameStrPtr = IRB.CreatePointerCast(VarNameStrVar, PrintfArgTy);
+                IRB.CreateCall(Printf, {FormatStrPtr, ModuleNamePtr, VarNameStrPtr, before, after});
+               }
+
+              //outs() << "\n";
               inst_count++;
-            }
           }
-        }
+        }        
       }
     }
 
