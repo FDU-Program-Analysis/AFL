@@ -37,6 +37,7 @@
 #endif
 #define _FILE_OFFSET_BITS 64
 
+#define STATE_VAR
 #include "config.h"
 #include "types.h"
 #include "debug.h"
@@ -155,7 +156,7 @@ EXP_ST u8  virgin_bits[2][MAP_SIZE],     /* Regions yet untouched by fuzzing */
            virgin_tmout[2][MAP_SIZE],    /* Bits we haven't seen in tmouts   */
            virgin_crash[2][MAP_SIZE];    /* Bits we haven't seen in crashes  */
 
-static u8  var_bytes[MAP_SIZE];       /* Bytes that appear to be variable */
+static u8  var_bytes[2][MAP_SIZE];       /* Bytes that appear to be variable */
 
 static s32 shm_id;                    /* ID of the SHM region             */
 static s32 shm_state_id;                    /* ID of the SHM region             */
@@ -177,7 +178,7 @@ EXP_ST u32 queued_paths,              /* Total number of queued testcases */
            cur_depth,                 /* Current path depth               */
            max_depth,                 /* Max path depth                   */
            useless_at_start,          /* Number of useless starting paths */
-           var_byte_count,            /* Bitmap bytes with var behavior   */
+           var_byte_count[2],            /* Bitmap bytes with var behavior   */
            current_entry,             /* Current queue entry ID           */
            havoc_div = 1;             /* Cycle count divisor for havoc    */
 
@@ -984,7 +985,7 @@ static inline u8 has_new_bits(u8* virgin_map, u8 isState) {
 
   }
 
-  if (ret && (virgin_map == virgin_bits[0] || virgin_map == virgin_bits[1])) bitmap_changed = 1;
+  if (ret && virgin_map == virgin_bits[isState]) bitmap_changed = 1;
 
   return ret;
 
@@ -1464,9 +1465,6 @@ EXP_ST void setup_shm(void) {
 
   if (!dumb_mode) setenv(SHM_ENV_VAR, shm_str, 1);
 
-  ck_free(shm_str);
-
-  trace_bits = shmat(shm_id, NULL, 0);
   #ifdef STATE_VAR
     u8* shm_state_str;
     if (!in_bitmap) memset(virgin_bits[1], 255, MAP_SIZE);
@@ -1475,6 +1473,7 @@ EXP_ST void setup_shm(void) {
     shm_state_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);
     if (shm_state_id < 0) PFATAL("shmget() failed");
     shm_state_str = alloc_printf("%d", shm_state_id);
+    // shm_state_str = alloc_printf("%d", shm_id);
     if (!dumb_mode) setenv(SHM_STATE_ENV_VAR, shm_state_str, 1);
     ck_free(shm_state_str);
 
@@ -1483,6 +1482,9 @@ EXP_ST void setup_shm(void) {
     if (state_bits == (void *)-1) PFATAL("shmat() failed");
   #endif
   
+  ck_free(shm_str);
+
+  trace_bits = shmat(shm_id, NULL, 0);
   if (trace_bits == (void *)-1) PFATAL("shmat() failed");
 }
 
@@ -2206,6 +2208,9 @@ EXP_ST void init_forkserver(char** argv) {
        falling through. */
 
     *(u32*)trace_bits = EXEC_FAIL_SIG;
+    #ifdef STATE_VAR
+    *(u32*)state_bits = EXEC_FAIL_SIG;
+    #endif
     exit(0);
 
   }
@@ -2319,6 +2324,9 @@ EXP_ST void init_forkserver(char** argv) {
 
   if (*(u32*)trace_bits == EXEC_FAIL_SIG)
     FATAL("Unable to execute target application ('%s')", argv[0]);
+
+  if (*(u32*)state_bits == EXEC_FAIL_SIG)
+    FATAL("Unable to execute state target application ('%s')", argv[0]);
 
   if (mem_limit && mem_limit < 500 && uses_asan) {
 
@@ -2520,7 +2528,9 @@ static u8 run_target(char** argv, u32 timeout) {
   } else {
 
     s32 res;
+
     if ((res = read(fsrv_st_fd, &status, 4)) != 4) {
+
       if (stop_soon) return 0;
       RPFATAL(res, "Unable to communicate with fork server (OOM?)");
 
@@ -2571,6 +2581,7 @@ static u8 run_target(char** argv, u32 timeout) {
     kill_signal = WTERMSIG(status);
 
     if (child_timed_out && kill_signal == SIGKILL) return FAULT_TMOUT;
+
     return FAULT_CRASH;
 
   }
@@ -2745,6 +2756,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
     }
 
     cksum[0] = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+
     #ifdef STATE_VAR
     cksum[1] = hash32(state_bits, MAP_SIZE, HASH_CONST);
     if (q->exec_cksum[0] != cksum[0] && q->exec_cksum[1] != cksum[1]) {
@@ -2766,12 +2778,13 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
         for (i = 0; i < MAP_SIZE; i++) {
           #ifdef STATE_VAR
-          if (!var_bytes[i] && (first_trace[i] != trace_bits[i] || first_state_trace[i]!=state_bits[i])) {
+          if (!(var_bytes[0][i] || var_bytes[1][i]) && (first_trace[i] != trace_bits[i] && first_state_trace[i]!=state_bits[i])) {
+            var_bytes[1][i] = 1;
           #else
-          if (!var_bytes[i] && first_trace[i] != trace_bits[i]) {
+          if (!var_bytes[0][i] && first_trace[i] != trace_bits[i]) {
           #endif
           
-            var_bytes[i] = 1;
+            var_bytes[0][i] = 1;
             stage_max    = CAL_CYCLES_LONG;
 
           }
@@ -2839,7 +2852,10 @@ abort_calibration:
 
   if (var_detected) {
 
-    var_byte_count = count_bytes(var_bytes);
+    var_byte_count[0] = count_bytes(var_bytes[0]);
+    #ifdef STATE_VAR
+    var_byte_count[1] = count_bytes(var_bytes[1]);
+    #endif
 
     if (!q->var_behavior) {
       mark_as_variable(q);
@@ -3334,6 +3350,10 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
     add_to_queue(fn, len, 0);
     #ifdef STATE_VAR
+    if (not_on_tty){
+        ACTF("State bitmap change causes this case: %u", queued_paths);
+        fflush(stdout);
+    }
     if (hnb[0] == 2 || hnb[1] == 2) {
     #else
     if (hnb[0] == 2) {
@@ -3389,7 +3409,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 #endif /* ^WORD_SIZE_64 */
 
         #ifdef STATE_VAR
-        if (!(has_new_bits(virgin_tmout[0], 0) || has_new_bits(virgin_bits[1], 1))) return keeping;
+        if (!(has_new_bits(virgin_tmout[0], 0) && has_new_bits(virgin_tmout[1], 1))) return keeping;
         #else
         if (!has_new_bits(virgin_tmout[0], 0)) return keeping;
         #endif
@@ -3460,7 +3480,7 @@ keep_as_crash:
 #endif /* ^WORD_SIZE_64 */
 
         #ifdef STATE_VAR
-        if (!(has_new_bits(virgin_crash[0], 0) || has_new_bits(virgin_bits[1], 1))) return keeping;
+        if (!(has_new_bits(virgin_crash[0], 0) && has_new_bits(virgin_crash[1], 1))) return keeping;
         #else
         if (!has_new_bits(virgin_crash[0], 0)) return keeping;
         #endif
@@ -3581,12 +3601,12 @@ static void find_timeout(void) {
 
 /* Update stats file for unattended monitoring. */
 
-static void write_stats_file(double bitmap_cvg, double stability, double eps) {
+static void write_stats_file(double bitmap_cvg, int isState, double stability, double eps) {
 
   static double last_bcvg, last_stab, last_eps;
   static struct rusage usage;
 
-  u8* fn = alloc_printf("%s/fuzzer_stats", out_dir);
+  u8* fn = isState ? alloc_printf("%s/state_fuzzer_stats", out_dir) : alloc_printf("%s/fuzzer_stats", out_dir);
   s32 fd;
   FILE* f;
 
@@ -4097,7 +4117,7 @@ static void show_stats(void) {
 
   static u64 last_stats_ms, last_plot_ms, last_ms, last_execs;
   static double avg_exec;
-  double t_byte_ratio, stab_ratio;
+  double t_byte_ratio[2], stab_ratio;
 
   u64 cur_ms;
   u32 t_bytes[2], t_bits[2];
@@ -4148,11 +4168,14 @@ static void show_stats(void) {
   /* Do some bitmap stats. */
 
   t_bytes[0] = count_non_255_bytes(virgin_bits[0]);
+  t_byte_ratio[0] = ((double)t_bytes[0] * 100) / MAP_SIZE;
+  #ifdef STATE_VAR
   t_bytes[1] = count_non_255_bytes(virgin_bits[1]);
-  t_byte_ratio = ((double)t_bytes[0] * 100) / MAP_SIZE;
+  t_byte_ratio[1] = ((double)t_bytes[1] * 100) / MAP_SIZE;
+  #endif
 
   if (t_bytes[0]) 
-    stab_ratio = 100 - ((double)var_byte_count) * 100 / t_bytes[0];
+    stab_ratio = 100 - ((double)var_byte_count[0]) * 100 / t_bytes[0];
   else
     stab_ratio = 100;
 
@@ -4161,7 +4184,10 @@ static void show_stats(void) {
   if (cur_ms - last_stats_ms > STATS_UPDATE_SEC * 1000) {
 
     last_stats_ms = cur_ms;
-    write_stats_file(t_byte_ratio, stab_ratio, avg_exec);
+    write_stats_file(t_byte_ratio[0], 0, stab_ratio, avg_exec);
+    #ifdef STATE_VAR
+    write_stats_file(t_byte_ratio[1], 1, stab_ratio, avg_exec);
+    #endif
     save_auto();
     write_bitmap();
 
@@ -4172,7 +4198,11 @@ static void show_stats(void) {
   if (cur_ms - last_plot_ms > PLOT_UPDATE_SEC * 1000) {
 
     last_plot_ms = cur_ms;
-    maybe_update_plot_file(t_byte_ratio, avg_exec);
+    #ifdef STATE_VAR
+    maybe_update_plot_file(t_byte_ratio[1], avg_exec);
+    #else
+    maybe_update_plot_file(t_byte_ratio[0], avg_exec);
+    #endif
  
   }
 
@@ -4327,11 +4357,17 @@ static void show_stats(void) {
   SAYF(bV bSTOP "  now processing : " cRST "%-17s " bSTG bV bSTOP, tmp);
 
   sprintf(tmp, "%0.02f%% / %0.02f%%", ((double)queue_cur->bitmap_size[0]) * 
-          100 / MAP_SIZE, t_byte_ratio);
+          100 / MAP_SIZE, t_byte_ratio[0]);
+  #ifdef STATE_VAR
+  sprintf(tmp, "%0.02f%% / %0.02f%%", ((double)queue_cur->bitmap_size[1]) * 
+          100 / MAP_SIZE, t_byte_ratio[1]);
+  SAYF("    state map density : %s%-21s " bSTG bV "\n", t_byte_ratio[1] > 70 ? cLRD : 
+       ((t_bytes[1] < 200 && !dumb_mode) ? cPIN : cRST), tmp);
+  #endif
 
-  SAYF("    map density : %s%-21s " bSTG bV "\n", t_byte_ratio > 70 ? cLRD : 
+  SAYF("    map density : %s%-21s " bSTG bV "\n", t_byte_ratio[0] > 70 ? cLRD : 
        ((t_bytes[0] < 200 && !dumb_mode) ? cPIN : cRST), tmp);
-
+  
   sprintf(tmp, "%s (%0.02f%%)", DI(cur_skipped_paths),
           ((double)cur_skipped_paths * 100) / queued_paths);
 
@@ -4476,8 +4512,8 @@ static void show_stats(void) {
   if (t_bytes[0]) sprintf(tmp, "%0.02f%%", stab_ratio);
     else strcpy(tmp, "n/a");
 
-  SAYF(" stability : %s%-10s " bSTG bV "\n", (stab_ratio < 85 && var_byte_count > 40) 
-       ? cLRD : ((queued_variable && (!persistent_mode || var_byte_count > 20))
+  SAYF(" stability : %s%-10s " bSTG bV "\n", (stab_ratio < 85 && var_byte_count[0] > 40) 
+       ? cLRD : ((queued_variable && (!persistent_mode || var_byte_count[0] > 20))
        ? cMGN : cRST), tmp);
 
   if (!bytes_trim_out) {
@@ -5270,7 +5306,9 @@ static u8 fuzz_one(char** argv) {
          For more info: https://github.com/AFLplusplus/AFLplusplus/pull/425 */
 
       queue_cur->exec_cksum[0] = 0;
+      #ifdef STATE_VAR
       queue_cur->exec_cksum[1] = 0;
+      #endif
 
       res = calibrate_case(argv, queue_cur, in_buf, queue_cycle - 1, 0);
 
@@ -5328,7 +5366,7 @@ static u8 fuzz_one(char** argv) {
   /* Skip deterministic fuzzing if exec path checksum puts this out of scope
      for this master instance. */
   #ifdef STATE_VAR
-  if (master_max && ((queue_cur->exec_cksum[0] % master_max) != master_id - 1) && ((queue_cur->exec_cksum[1] % master_max) != master_id - 1))
+  if (master_max && (((queue_cur->exec_cksum[0] % master_max) != master_id - 1) || ((queue_cur->exec_cksum[1] % master_max) != master_id - 1)))
   #else
   if (master_max && ((queue_cur->exec_cksum[0] % master_max) != master_id - 1))
   #endif
@@ -5357,7 +5395,9 @@ static u8 fuzz_one(char** argv) {
   orig_hit_cnt = queued_paths + unique_crashes;
 
   prev_cksum[0] = queue_cur->exec_cksum[0];
+  #ifdef STATE_VAR
   prev_cksum[1] = queue_cur->exec_cksum[1];
+  #endif
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
 
@@ -8282,7 +8322,7 @@ int main(int argc, char** argv) {
 
   seek_to = find_start_position();
 
-  write_stats_file(0, 0, 0);
+  write_stats_file(0, 0, 0, 0);
   save_auto();
 
   if (stop_soon) goto stop_fuzzing;
@@ -8369,7 +8409,7 @@ int main(int argc, char** argv) {
   }
 
   write_bitmap();
-  write_stats_file(0, 0, 0);
+  write_stats_file(0, 0, 0, 0);
   save_auto();
 
 stop_fuzzing:
