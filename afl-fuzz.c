@@ -166,6 +166,7 @@ static volatile u8 stop_soon,         /* Ctrl-C pressed?                  */
                    child_timed_out;   /* Traced process timed out?        */
 
 EXP_ST u32 queued_paths,              /* Total number of queued testcases */
+           queued_blocks,             /* Total number of found  blocks    */
            queued_variable,           /* Testcases with variable behavior */
            queued_at_start,           /* Total number of initial inputs   */
            queued_discovered,         /* Items discovered during this run */
@@ -3335,7 +3336,11 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     #endif
       if (crash_mode) total_crashes++;
       return 0;
-    }    
+    }
+
+    if (hnb[0]){
+      queued_blocks++;
+    }
 
 #ifndef SIMPLE_FILES
 
@@ -3350,7 +3355,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
     add_to_queue(fn, len, 0);
     #ifdef STATE_VAR
-    if (not_on_tty){
+    if (not_on_tty && hnb[1]){
         ACTF("State bitmap change causes this case: %u", queued_paths);
         fflush(stdout);
     }
@@ -3664,7 +3669,7 @@ static void write_stats_file(double bitmap_cvg, int isState, double stability, d
              "slowest_exec_ms   : %llu\n",
              start_time / 1000, get_cur_time() / 1000, getpid(),
              queue_cycle ? (queue_cycle - 1) : 0, total_execs, eps,
-             queued_paths, queued_favored, queued_discovered, queued_imported,
+             queued_blocks, queued_favored, queued_discovered, queued_imported,
              max_depth, current_entry, pending_favored, pending_not_fuzzed,
              queued_variable, stability, bitmap_cvg, unique_crashes,
              unique_hangs, last_path_time / 1000, last_crash_time / 1000,
@@ -3727,7 +3732,7 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
 
   fprintf(plot_file, 
           "%llu, %llu, %u, %u, %u, %u, %0.02f%%, %llu, %llu, %u, %0.02f\n",
-          get_cur_time() / 1000, queue_cycle - 1, current_entry, queued_paths,
+          get_cur_time() / 1000, queue_cycle - 1, current_entry, queued_blocks,
           pending_not_fuzzed, pending_favored, bitmap_cvg, unique_crashes,
           unique_hangs, max_depth, eps); /* ignore errors */
 
@@ -4198,11 +4203,12 @@ static void show_stats(void) {
   if (cur_ms - last_plot_ms > PLOT_UPDATE_SEC * 1000) {
 
     last_plot_ms = cur_ms;
-    #ifdef STATE_VAR
-    maybe_update_plot_file(t_byte_ratio[1], avg_exec);
-    #else
+    // #ifdef STATE_VAR
+    // maybe_update_plot_file(t_byte_ratio[1], avg_exec);
+    // #else
+    // maybe_update_plot_file(t_byte_ratio[0], avg_exec);
+    // #endif
     maybe_update_plot_file(t_byte_ratio[0], avg_exec);
-    #endif
  
   }
 
@@ -4323,7 +4329,7 @@ static void show_stats(void) {
   }
 
   SAYF(bSTG bV bSTOP "  total paths : " cRST "%-5s  " bSTG bV "\n",
-       DI(queued_paths));
+       DI(queued_blocks));
 
   /* Highlight crashes in red if found, denote going over the KEEP_UNIQUE_CRASH
      limit with a '+' appended to the count. */
