@@ -138,10 +138,10 @@ static void edit_params(u32 argc, char** argv) {
   cc_params[cc_par_cnt++] = "-Xclang";
   cc_params[cc_par_cnt++] = "find-state-variable";
   cc_params[cc_par_cnt++] = "-fno-discard-value-names";
-  // cc_params[cc_par_cnt++] = "-Xclang";
-  // cc_params[cc_par_cnt++] = "-plugin-arg-find-state-variable";
-  // cc_params[cc_par_cnt++] = "-Xclang";
-  // cc_params[cc_par_cnt++] = "-enable-log";
+  cc_params[cc_par_cnt++] = "-Xclang";
+  cc_params[cc_par_cnt++] = "-plugin-arg-find-state-variable";
+  cc_params[cc_par_cnt++] = "-Xclang";
+  cc_params[cc_par_cnt++] = "-enable-log";
   cc_params[cc_par_cnt++] = "-Xclang";
   cc_params[cc_par_cnt++] = "-load";
   cc_params[cc_par_cnt++] = "-Xclang";

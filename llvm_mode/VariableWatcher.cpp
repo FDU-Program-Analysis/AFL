@@ -21,8 +21,7 @@
 
 #include <unordered_set>
 
-#define MAX_PRE_LEN 6
-
+//#define PASS_LOG
 using namespace llvm;
 
 namespace {
@@ -42,6 +41,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
     IntegerType *Int16Ty = IntegerType::getInt16Ty(CTX);
     IntegerType *Int32Ty = IntegerType::getInt32Ty(CTX);
     IntegerType *Int64Ty = IntegerType::getInt64Ty(CTX);
+    IntegerType *IntMapSizeTy = IntegerType::getIntNTy(CTX, MAP_SIZE_POW2);
 
     /* printf function */
     // declaration of printf
@@ -59,7 +59,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
     // inject a global variable that will hold the printf format string
     Constant *IntFormatStr =
-        ConstantDataArray::getString(CTX, "[runtime log] file: %s name: %s value: %lld => %lld\n");
+        ConstantDataArray::getString(CTX, "[runtime log] file: %s name: %s value: %lld => %lld idx: %d counter: %d\n");
     Constant *FltFormatStr =
         ConstantDataArray::getString(CTX, "[runtime log] file: %s name: %s value: %lf => %lf\n");
     Constant *IntFormatStrVar =
@@ -91,7 +91,9 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
     std::map<Value*, uint16_t> VariableSet;
 
+    outs() << "file: " << M.getModuleIdentifier() << "\n";
     for (auto &F : M) {
+      outs() << "function: " << F.getName() << "\n";
       for (auto &BB : F) {
         for (auto &I : BB) {
           if (auto *SI = dyn_cast<StoreInst>(&I)) {
@@ -99,16 +101,18 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               Value *PtrValue = SI->getPointerOperand();
               
               // get variable number
-              uint16_t Num;
+              unsigned map_size = MAP_SIZE_POW2;
+              unsigned Num;
+              StringRef VarName = PtrValue->getName();
               if (VariableSet.count(PtrValue)) {
                 Num = VariableSet.at(PtrValue);
-                //outs() << "first: " << Num << "\n";
+                outs() << "var: " << Num << " name:" << VarName << "\n";
               } else {
                 Num = AFL_R(MAP_SIZE);
                 VariableSet.insert(std::pair<Value*, uint16_t>(PtrValue, Num));
-                //outs() << "insert: " << Num << "\n";
+                outs() << "first var: " << Num << " name:" << VarName << "\n";
               }
-              ConstantInt *Number = ConstantInt::get(Int16Ty, Num);
+              ConstantInt *Number = ConstantInt::get(IntMapSizeTy, Num);
 
           
               IRBuilder<> IRB(SI->getNextNonDebugInstruction());
@@ -132,9 +136,9 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               if (Cast != nullptr) {
                 IntegerType *IntTy = dyn_cast<IntegerType>(Cast->getType());
                 unsigned bitwidth = IntTy->getBitWidth();
-                if (bitwidth < 16) {
-                  Cast = IRB.CreateZExt(Cast, Int16Ty);
-                } else if (bitwidth > 16) {
+                if (bitwidth < map_size) {
+                  Cast = IRB.CreateZExt(Cast, IntegerType::getIntNTy(CTX, map_size));
+                } else if (bitwidth > map_size) {
                   switch (bitwidth)
                   {
                   case 64: {
@@ -144,6 +148,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                       part = IRB.CreateTrunc(part, Int16Ty);
                       tmp = IRB.CreateXor(tmp, part);
                     }
+                    if (map_size > 16) tmp = IRB.CreateZExt(tmp, IntMapSizeTy);
                     Cast = tmp;
                     break;
                   }
@@ -152,10 +157,11 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                     high = IRB.CreateTrunc(high, Int16Ty);
                     Value *low = IRB.CreateTrunc(Cast, Int16Ty);
                     Cast = IRB.CreateXor(high, low);
+                    if (map_size > 16) Cast = IRB.CreateZExt(Cast, IntMapSizeTy);
                     break;
                   }
                   default:
-                    Cast = IRB.CreateTrunc(Cast, Int16Ty);
+                    Cast = IRB.CreateTrunc(Cast, IntMapSizeTy);
                     break;
                   }
                 }
@@ -164,6 +170,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               // other type
               } else {
                 Xor = Number;
+                outs() << "[pass-log] " << "cast part: other type: " << *Load << "\n";
               }
 
               // get map idx
@@ -177,10 +184,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               IRB.CreateStore(Inc, MapPtrIdx);
               
               /* log */
-              if (Cast == nullptr) {
-                outs() << "[pass-log] " << "cast part: other type: " << *Load << "\n";
-              }
-
+#ifdef PASS_LOG
               IRBuilder<> IRB2(SI);
               LoadInst *Before = IRB2.CreateLoad(PtrValue);
               LoadInst *After = IRB.CreateLoad(PtrValue);
@@ -218,9 +222,10 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                 }
                 Value *VarNameStrPtr = IRB.CreatePointerCast(VarNameStrVar, PrintfArgTy);
 
-                IRB.CreateCall(Printf, {FormatStrPtr, ModuleNamePtr, VarNameStrPtr, Before, After});
+                IRB.CreateCall(Printf, {FormatStrPtr, ModuleNamePtr, VarNameStrPtr, Before, After, Ext, Counter});
               }
               /* log end */
+#endif
 
               inst_count++;
             }
