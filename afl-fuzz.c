@@ -3356,8 +3356,9 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     add_to_queue(fn, len, 0);
     #ifdef STATE_VAR
     if (not_on_tty && hnb[1]){
-        ACTF("State bitmap change causes this case: %u", queued_paths);
-        fflush(stdout);
+      fn = alloc_printf("%s/queue/id:%06u,%s,state", out_dir, queued_paths, describe_op(hnb[0]));
+      ACTF("State bitmap change causes this case: %u", queued_paths);
+      fflush(stdout);
     }
     if (hnb[0] == 2 || hnb[1] == 2) {
     #else
@@ -4364,15 +4365,16 @@ static void show_stats(void) {
 
   sprintf(tmp, "%0.02f%% / %0.02f%%", ((double)queue_cur->bitmap_size[0]) * 
           100 / MAP_SIZE, t_byte_ratio[0]);
+  SAYF("    map density : %s%-21s " bSTG bV "\n", t_byte_ratio[0] > 70 ? cLRD : 
+       ((t_bytes[0] < 200 && !dumb_mode) ? cPIN : cRST), tmp);
+
+
   #ifdef STATE_VAR
   sprintf(tmp, "%0.02f%% / %0.02f%%", ((double)queue_cur->bitmap_size[1]) * 
           100 / MAP_SIZE, t_byte_ratio[1]);
   SAYF("    state map density : %s%-21s " bSTG bV "\n", t_byte_ratio[1] > 70 ? cLRD : 
        ((t_bytes[1] < 200 && !dumb_mode) ? cPIN : cRST), tmp);
   #endif
-
-  SAYF("    map density : %s%-21s " bSTG bV "\n", t_byte_ratio[0] > 70 ? cLRD : 
-       ((t_bytes[0] < 200 && !dumb_mode) ? cPIN : cRST), tmp);
   
   sprintf(tmp, "%s (%0.02f%%)", DI(cur_skipped_paths),
           ((double)cur_skipped_paths * 100) / queued_paths);
