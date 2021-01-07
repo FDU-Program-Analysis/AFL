@@ -43,6 +43,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
     IntegerType *Int64Ty = IntegerType::getInt64Ty(CTX);
     IntegerType *IntMapSizeTy = IntegerType::getIntNTy(CTX, MAP_SIZE_POW2);
 
+#ifdef PASS_LOG
     /* printf function */
     // declaration of printf
     PointerType *PrintfArgTy = PointerType::getUnqual(Type::getInt8Ty(CTX));
@@ -82,39 +83,79 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
     dyn_cast<GlobalVariable>(ModuleNameVar)->setInitializer(ModuleName);
     dyn_cast<GlobalVariable>(ModuleNameVar)->setLinkage(GlobalValue::PrivateLinkage);
     /* printf function end*/
-
+#endif
 
     // get globals for share region
     GlobalVariable *AFLMapPtr =
         new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
                            GlobalValue::ExternalLinkage, 0, "__state_map_ptr");
 
-    std::map<Value*, uint16_t> VariableSet;
+    std::map<Value*, unsigned int> VariableSet;
+    std::map<StringRef, unsigned int> MemberSet;
 
-    outs() << "file: " << M.getModuleIdentifier() << "\n";
+    outs() << "file: [" << M.getModuleIdentifier() << "]\n";
     for (auto &F : M) {
-      outs() << "function: " << F.getName() << "\n";
+      outs() << "function: [" << F.getName() << "]\n";
       for (auto &BB : F) {
         for (auto &I : BB) {
           if (auto *SI = dyn_cast<StoreInst>(&I)) {
-            if (SI->getMetadata("labyrinth.label.state_describing")) {
-              Value *PtrValue = SI->getPointerOperand();
+            bool IsMember = false;
+            bool IsVariable = false;
+            Value *PtrValue = SI->getPointerOperand();
+            unsigned map_size = MAP_SIZE_POW2;
+            unsigned int Num;
+            ConstantInt *Number = nullptr;
+
+            if (SI->getMetadata("labyrinth.label.state_describing.member")) {
+              IsMember = true;
+              StringRef MemName = PtrValue->getName();
+              //outs() << "member: " << MemName << "\n";
+
+              // trim member variable number
+              size_t len = MemName.size();
+              for (size_t i = 0; i < len; ++i) {
+                if (isDigit(MemName[i])) {
+                  MemName = MemName.take_front(i);
+                  //outs() << "trim name: " << MemName << "\n";
+                  break;
+                }
+              }
+
+              if (MemberSet.count(MemName)) {
+                Num = MemberSet.at(MemName);
+                outs() << "member: " << Num << " name:" << MemName << "\n";
+              } else {
+                Num = AFL_R(MAP_SIZE);
+                MemberSet.insert(std::pair<StringRef, unsigned int>(MemName, Num));
+                outs() << "first member: " << Num << " name: " << MemName << "\n";
+              }
+              Number = ConstantInt::get(IntMapSizeTy, Num);
+
+            }
+
+            if (SI->getMetadata("labyrinth.label.state_describing.variable")) {
+              IsVariable = true;
+              if (IsMember) {
+                outs() << "Both error\n";
+              }
               
               // get variable number
-              unsigned map_size = MAP_SIZE_POW2;
-              unsigned Num;
               StringRef VarName = PtrValue->getName();
               if (VariableSet.count(PtrValue)) {
                 Num = VariableSet.at(PtrValue);
-                outs() << "var: " << Num << " name:" << VarName << "\n";
+                outs() << "var: " << Num << " name: " << VarName << "\n";
               } else {
                 Num = AFL_R(MAP_SIZE);
-                VariableSet.insert(std::pair<Value*, uint16_t>(PtrValue, Num));
-                outs() << "first var: " << Num << " name:" << VarName << "\n";
+                VariableSet.insert(std::pair<Value*, unsigned int>(PtrValue, Num));
+                outs() << "first var: " << Num << " name: " << VarName << "\n";
               }
-              ConstantInt *Number = ConstantInt::get(IntMapSizeTy, Num);
+              Number = ConstantInt::get(IntMapSizeTy, Num);
+            }
 
-          
+
+              if (IsMember || IsVariable){
+
+              // instrumentation
               IRBuilder<> IRB(SI->getNextNonDebugInstruction());
               LoadInst *Load = IRB.CreateLoad(PtrValue);
               
@@ -232,8 +273,11 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
           }
         }
       }
+      outs() << "function: [" << F.getName() << "] end\n\n";
     }
-    
+    outs() << "file: [" << M.getModuleIdentifier() << "] end\n";
+    outs() << "=================================================\n";
+
     OKF("State-Pass Instrumented %u locations.", inst_count);
 
     if (inst_count)

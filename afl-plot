@@ -132,6 +132,12 @@ set output '$2/exec_speed.png'
 plot '$1/plot_data' using 1:11 with filledcurve x1 title '' linecolor rgb '#0090ff' fillstyle transparent solid 0.2 noborder, \\
      '$1/plot_data' using 1:11 with lines title '    execs/sec' linecolor rgb '#0090ff' linewidth 3 smooth bezier;
 
+set terminal png truecolor enhanced size 1000,200 butt
+set output '$2/state_bitmap.png'
+
+plot '$1/plot_data' using 1:7 with filledcurve x1 title '' linecolor rgb '#c00080' fillstyle transparent solid 0.2 noborder, \\
+     '' using 1:7 with lines title ' state bitmap density' linecolor rgb '#c00080' linewidth 3 smooth bezier
+
 _EOF_
 
 ) | gnuplot 
@@ -154,7 +160,8 @@ cat >"$2/index.html" <<_EOF_
 <p>
 <img src="high_freq.png" width=1000 height=300><p>
 <img src="low_freq.png" width=1000 height=200><p>
-<img src="exec_speed.png" width=1000 height=200>
+<img src="exec_speed.png" width=1000 height=200><p>
+<img src="state_bitmap.png" width=1000 height=300>
 
 _EOF_
 
