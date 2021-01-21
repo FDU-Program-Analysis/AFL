@@ -59,10 +59,11 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
     PrintfF->addParamAttr(0, Attribute::ReadOnly);
 
     // inject a global variable that will hold the printf format string
-    Constant *IntFormatStr =
-        ConstantDataArray::getString(CTX, "[runtime log] file: %s name: %s value: %lld => %lld idx: %d counter: %d\n");
-    Constant *FltFormatStr =
-        ConstantDataArray::getString(CTX, "[runtime log] file: %s name: %s value: %lf => %lf\n");
+    Constant *IntFormatStr = ConstantDataArray::getString(
+        CTX, "[runtime log] file: %s name: %s value: %lld => %lld idx: %d "
+             "counter: %d\n");
+    Constant *FltFormatStr = ConstantDataArray::getString(
+        CTX, "[runtime log] file: %s name: %s value: %lf => %lf\n");
     Constant *IntFormatStrVar =
         M.getOrInsertGlobal("IntFormatStr", IntFormatStr->getType());
     if (auto *Var = dyn_cast<GlobalVariable>(IntFormatStrVar)) {
@@ -78,10 +79,13 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
       Var->setLinkage(GlobalValue::PrivateLinkage);
     }
 
-    Constant *ModuleName = ConstantDataArray::getString(CTX, M.getModuleIdentifier());
-    Constant *ModuleNameVar = M.getOrInsertGlobal("ModuleName", ModuleName->getType());
+    Constant *ModuleName =
+        ConstantDataArray::getString(CTX, M.getModuleIdentifier());
+    Constant *ModuleNameVar =
+        M.getOrInsertGlobal("ModuleName", ModuleName->getType());
     dyn_cast<GlobalVariable>(ModuleNameVar)->setInitializer(ModuleName);
-    dyn_cast<GlobalVariable>(ModuleNameVar)->setLinkage(GlobalValue::PrivateLinkage);
+    dyn_cast<GlobalVariable>(ModuleNameVar)
+        ->setLinkage(GlobalValue::PrivateLinkage);
     /* printf function end*/
 #endif
 
@@ -90,7 +94,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
         new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
                            GlobalValue::ExternalLinkage, 0, "__state_map_ptr");
 
-    std::map<Value*, unsigned int> VariableSet;
+    std::map<Value *, unsigned int> VariableSet;
     std::map<StringRef, unsigned int> MemberSet;
 
     outs() << "file: [" << M.getModuleIdentifier() << "]\n";
@@ -109,14 +113,14 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
             if (SI->getMetadata("labyrinth.label.state_describing.member")) {
               IsMember = true;
               StringRef MemName = PtrValue->getName();
-              //outs() << "member: " << MemName << "\n";
+              // outs() << "member: " << MemName << "\n";
 
               // trim member variable number
               size_t len = MemName.size();
               for (size_t i = 0; i < len; ++i) {
                 if (isDigit(MemName[i])) {
                   MemName = MemName.take_front(i);
-                  //outs() << "trim name: " << MemName << "\n";
+                  // outs() << "trim name: " << MemName << "\n";
                   break;
                 }
               }
@@ -126,11 +130,12 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                 outs() << "member: " << Num << " name:" << MemName << "\n";
               } else {
                 Num = AFL_R(MAP_SIZE);
-                MemberSet.insert(std::pair<StringRef, unsigned int>(MemName, Num));
-                outs() << "first member: " << Num << " name: " << MemName << "\n";
+                MemberSet.insert(
+                    std::pair<StringRef, unsigned int>(MemName, Num));
+                outs() << "first member: " << Num << " name: " << MemName
+                       << "\n";
               }
               Number = ConstantInt::get(IntMapSizeTy, Num);
-
             }
 
             if (SI->getMetadata("labyrinth.label.state_describing.variable")) {
@@ -138,7 +143,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               if (IsMember) {
                 outs() << "Both error\n";
               }
-              
+
               // get variable number
               StringRef VarName = PtrValue->getName();
               if (VariableSet.count(PtrValue)) {
@@ -146,22 +151,23 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                 outs() << "var: " << Num << " name: " << VarName << "\n";
               } else {
                 Num = AFL_R(MAP_SIZE);
-                VariableSet.insert(std::pair<Value*, unsigned int>(PtrValue, Num));
+                VariableSet.insert(
+                    std::pair<Value *, unsigned int>(PtrValue, Num));
                 outs() << "first var: " << Num << " name: " << VarName << "\n";
               }
               Number = ConstantInt::get(IntMapSizeTy, Num);
             }
 
-
-              if (IsMember || IsVariable){
+            if (IsMember || IsVariable) {
 
               // instrumentation
               IRBuilder<> IRB(SI->getNextNonDebugInstruction());
               LoadInst *Load = IRB.CreateLoad(PtrValue);
-              
+
               // casting float and double into integer
               Value *Cast = nullptr;
-              Type *ValueTy = Load->getPointerOperandType()->getPointerElementType();
+              Type *ValueTy =
+                  Load->getPointerOperandType()->getPointerElementType();
               if (ValueTy->isPointerTy()) {
                 continue;
               } else if (ValueTy->isIntegerTy()) {
@@ -178,18 +184,19 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                 IntegerType *IntTy = dyn_cast<IntegerType>(Cast->getType());
                 unsigned bitwidth = IntTy->getBitWidth();
                 if (bitwidth < map_size) {
-                  Cast = IRB.CreateZExt(Cast, IntegerType::getIntNTy(CTX, map_size));
+                  Cast = IRB.CreateZExt(Cast,
+                                        IntegerType::getIntNTy(CTX, map_size));
                 } else if (bitwidth > map_size) {
-                  switch (bitwidth)
-                  {
+                  switch (bitwidth) {
                   case 64: {
                     Value *tmp = IRB.CreateTrunc(Cast, Int16Ty);
                     for (int i = 1; i <= 3; ++i) {
-                      Value *part = IRB.CreateLShr(Cast, 16*i);
+                      Value *part = IRB.CreateLShr(Cast, 16 * i);
                       part = IRB.CreateTrunc(part, Int16Ty);
                       tmp = IRB.CreateXor(tmp, part);
                     }
-                    if (map_size > 16) tmp = IRB.CreateZExt(tmp, IntMapSizeTy);
+                    if (map_size > 16)
+                      tmp = IRB.CreateZExt(tmp, IntMapSizeTy);
                     Cast = tmp;
                     break;
                   }
@@ -198,7 +205,8 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                     high = IRB.CreateTrunc(high, Int16Ty);
                     Value *low = IRB.CreateTrunc(Cast, Int16Ty);
                     Cast = IRB.CreateXor(high, low);
-                    if (map_size > 16) Cast = IRB.CreateZExt(Cast, IntMapSizeTy);
+                    if (map_size > 16)
+                      Cast = IRB.CreateZExt(Cast, IntMapSizeTy);
                     break;
                   }
                   default:
@@ -207,11 +215,12 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                   }
                 }
                 Xor = IRB.CreateXor(Cast, Number);
-              
-              // other type
+
+                // other type
               } else {
                 Xor = Number;
-                outs() << "[pass-log] " << "cast part: other type: " << *Load << "\n";
+                outs() << "[pass-log] "
+                       << "cast part: other type: " << *Load << "\n";
               }
 
               // get map idx
@@ -223,7 +232,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               LoadInst *Counter = IRB.CreateLoad(MapPtrIdx);
               Value *Inc = IRB.CreateAdd(Counter, ConstantInt::get(Int8Ty, 1));
               IRB.CreateStore(Inc, MapPtrIdx);
-              
+
               /* log */
 #ifdef PASS_LOG
               IRBuilder<> IRB2(SI);
@@ -235,35 +244,49 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               Value *FormatStrPtr = nullptr;
               if (AfterTy->isIntegerTy()) {
                 Cmp = IRB.CreateICmpNE(Before, After);
-                FormatStrPtr = IRB.CreatePointerCast(IntFormatStrVar, PrintfArgTy, "IntFormatStr");
+                FormatStrPtr = IRB.CreatePointerCast(
+                    IntFormatStrVar, PrintfArgTy, "IntFormatStr");
 
               } else if (AfterTy->isFloatTy() || AfterTy->isDoubleTy()) {
                 Cmp = IRB.CreateFCmpUEQ(Before, After);
-                FormatStrPtr = IRB.CreatePointerCast(FltFormatStrVar, PrintfArgTy, "FltFormatStr");
-                
+                FormatStrPtr = IRB.CreatePointerCast(
+                    FltFormatStrVar, PrintfArgTy, "FltFormatStr");
+
               } else {
-                outs() << "[pass-log] " << "log part: other type: " << AfterTy->getTypeID() << "\n";
+                outs() << "[pass-log] "
+                       << "log part: other type: " << AfterTy->getTypeID()
+                       << "\n";
               }
 
               if (Cmp != nullptr && FormatStrPtr != nullptr) {
-                Instruction *Split = dyn_cast<Instruction>(Cmp)->getNextNonDebugInstruction();
-                //outs() << "[pass-log] " << "cmp next inst: " << *Split << "\n";
-                auto *ThenTerm = SplitBlockAndInsertIfThen(Cmp, Split, false, nullptr, nullptr, nullptr, nullptr);
+                Instruction *Split =
+                    dyn_cast<Instruction>(Cmp)->getNextNonDebugInstruction();
+                // outs() << "[pass-log] " << "cmp next inst: " << *Split <<
+                // "\n";
+                auto *ThenTerm = SplitBlockAndInsertIfThen(
+                    Cmp, Split, false, nullptr, nullptr, nullptr, nullptr);
 
                 IRB.SetInsertPoint(ThenTerm);
-                Value *ModuleNamePtr = IRB.CreatePointerCast(ModuleNameVar, PrintfArgTy, "ModuleName");
+                Value *ModuleNamePtr = IRB.CreatePointerCast(
+                    ModuleNameVar, PrintfArgTy, "ModuleName");
                 StringRef VarName = PtrValue->getName();
                 VarNameNum++;
-                Constant *VarNameStr = ConstantDataArray::getString(CTX, VarName.str());
-                Constant *VarNameStrVar = M.getOrInsertGlobal(".name" + std::to_string(VarNameNum), VarNameStr->getType());
+                Constant *VarNameStr =
+                    ConstantDataArray::getString(CTX, VarName.str());
+                Constant *VarNameStrVar =
+                    M.getOrInsertGlobal(".name" + std::to_string(VarNameNum),
+                                        VarNameStr->getType());
                 if (auto *Var = dyn_cast<GlobalVariable>(VarNameStrVar)) {
                   if (!Var->hasInitializer())
-                  Var->setInitializer(VarNameStr);
+                    Var->setInitializer(VarNameStr);
                   Var->setLinkage(GlobalValue::PrivateLinkage);
                 }
-                Value *VarNameStrPtr = IRB.CreatePointerCast(VarNameStrVar, PrintfArgTy);
+                Value *VarNameStrPtr =
+                    IRB.CreatePointerCast(VarNameStrVar, PrintfArgTy);
 
-                IRB.CreateCall(Printf, {FormatStrPtr, ModuleNamePtr, VarNameStrPtr, Before, After, Ext, Counter});
+                IRB.CreateCall(Printf,
+                               {FormatStrPtr, ModuleNamePtr, VarNameStrPtr,
+                                Before, After, Ext, Counter});
               }
               /* log end */
 #endif
