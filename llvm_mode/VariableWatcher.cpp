@@ -15,14 +15,85 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/GraphWriter.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
+#include <fstream>
+#include <iostream>
 #include <unordered_set>
 
 //#define PASS_LOG
 using namespace llvm;
+
+/* parsing params */
+cl::opt<std::string> OutDirectory(
+    "outdir",
+    cl::desc(
+        "Output directory contains Ftargets.txtm Fnames.txt and BBnames.txt"),
+    cl::value_desc("outdir"));
+
+/* some function need to be skip */
+static bool isBlacklisted(const Function *F) {
+  static const SmallVector<std::string, 8> Blacklist = {
+      "asan.", "llvm.",  "sancov.", "__ubsan_handle_",
+      "free",  "malloc", "calloc",  "realloc"};
+
+  for (auto const &FuncName : Blacklist) {
+    if (F->getName().startswith(FuncName)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/* get instruction debug location infomation */
+static void getDebugLoc(const Instruction *I, std::string &Filename,
+                        unsigned &Line) {
+  if (DILocation *Loc = I->getDebugLoc()) {
+    Line = Loc->getLine();
+    Filename = Loc->getFilename().str();
+
+    if (Filename.empty()) {
+      DILocation *oDILoc = Loc->getInlinedAt();
+      if (oDILoc) {
+        Line = oDILoc->getLine();
+        Filename = oDILoc->getFilename().str();
+      }
+    } 
+  }
+}
+
+namespace llvm {
+
+/* customize dot graph drawer */
+template<>
+struct DOTGraphTraits<Function*> : public DefaultDOTGraphTraits {
+  DOTGraphTraits(bool isSimple=true) : DefaultDOTGraphTraits(isSimple) {}
+
+  static std::string getGraphName(Function *F) {
+    return "CFG for '" + F->getName().str() + "' function";
+  }
+
+  std::string getNodeLabel(BasicBlock *Node, Function *Graph) {
+    if (!Node->getName().empty()) {
+      return Node->getName().str();
+    }
+
+    std::string Str;
+    raw_string_ostream OS(Str);
+
+    Node->printAsOperand(OS, false);
+    return OS.str();
+  }
+};
+
+
+}
+
 
 namespace {
 
@@ -59,10 +130,11 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
     PrintfF->addParamAttr(0, Attribute::ReadOnly);
 
     // inject a global variable that will hold the printf format string
-    Constant *IntFormatStr =
-        ConstantDataArray::getString(CTX, "[runtime log] file: %s name: %s value: %lld => %lld idx: %d counter: %d\n");
-    Constant *FltFormatStr =
-        ConstantDataArray::getString(CTX, "[runtime log] file: %s name: %s value: %lf => %lf\n");
+    Constant *IntFormatStr = ConstantDataArray::getString(
+        CTX, "[runtime log] file: %s name: %s value: %lld => %lld idx: %d "
+             "counter: %d\n");
+    Constant *FltFormatStr = ConstantDataArray::getString(
+        CTX, "[runtime log] file: %s name: %s value: %lf => %lf\n");
     Constant *IntFormatStrVar =
         M.getOrInsertGlobal("IntFormatStr", IntFormatStr->getType());
     if (auto *Var = dyn_cast<GlobalVariable>(IntFormatStrVar)) {
@@ -78,207 +150,343 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
       Var->setLinkage(GlobalValue::PrivateLinkage);
     }
 
-    Constant *ModuleName = ConstantDataArray::getString(CTX, M.getModuleIdentifier());
-    Constant *ModuleNameVar = M.getOrInsertGlobal("ModuleName", ModuleName->getType());
+    Constant *ModuleName =
+        ConstantDataArray::getString(CTX, M.getModuleIdentifier());
+    Constant *ModuleNameVar =
+        M.getOrInsertGlobal("ModuleName", ModuleName->getType());
     dyn_cast<GlobalVariable>(ModuleNameVar)->setInitializer(ModuleName);
-    dyn_cast<GlobalVariable>(ModuleNameVar)->setLinkage(GlobalValue::PrivateLinkage);
+    dyn_cast<GlobalVariable>(ModuleNameVar)
+        ->setLinkage(GlobalValue::PrivateLinkage);
     /* printf function end*/
 #endif
+
+    SAYF(cCYA "state-llvm-pass " cBRI VERSION cRST
+              " by FDU-Program-Analysis\n");
 
     // get globals for share region
     GlobalVariable *AFLMapPtr =
         new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
                            GlobalValue::ExternalLinkage, 0, "__state_map_ptr");
 
-    std::map<Value*, unsigned int> VariableSet;
+    std::map<Value *, unsigned int> VariableSet;
     std::map<StringRef, unsigned int> MemberSet;
 
-    outs() << "file: [" << M.getModuleIdentifier() << "]\n";
-    for (auto &F : M) {
-      outs() << "function: [" << F.getName() << "]\n";
-      for (auto &BB : F) {
-        for (auto &I : BB) {
-          if (auto *SI = dyn_cast<StoreInst>(&I)) {
-            bool IsMember = false;
-            bool IsVariable = false;
-            Value *PtrValue = SI->getPointerOperand();
-            unsigned map_size = MAP_SIZE_POW2;
-            unsigned int Num;
-            ConstantInt *Number = nullptr;
+    if (!OutDirectory.empty()) {
 
-            if (SI->getMetadata("labyrinth.label.state_describing.member")) {
-              IsMember = true;
-              StringRef MemName = PtrValue->getName();
-              //outs() << "member: " << MemName << "\n";
+      std::ofstream bbnames(OutDirectory + "/BBnames.txt",
+                            std::ofstream::out | std::ofstream::app);
+      std::ofstream bbcalls(OutDirectory + "/BBcalls.txt",
+                            std::ofstream::out | std::ofstream::app);
+      std::ofstream fnames(OutDirectory + "/Fnames.txt",
+                           std::ofstream::out | std::ofstream::app);
+      // std::ofstream ftargets(OutDirectory + "/Ftargets.txt",
+      // std::ofstream::out | std::ofstream::app);
 
-              // trim member variable number
-              size_t len = MemName.size();
-              for (size_t i = 0; i < len; ++i) {
-                if (isDigit(MemName[i])) {
-                  MemName = MemName.take_front(i);
-                  //outs() << "trim name: " << MemName << "\n";
-                  break;
-                }
-              }
+      /* create dot-files dir */
+      std::string dotfiles(OutDirectory + "/dot-files");
+      if (sys::fs::create_directory(dotfiles)) {
+        FATAL("could not create directory %s", dotfiles.c_str());
+      }
 
-              if (MemberSet.count(MemName)) {
-                Num = MemberSet.at(MemName);
-                outs() << "member: " << Num << " name:" << MemName << "\n";
-              } else {
-                Num = AFL_R(MAP_SIZE);
-                MemberSet.insert(std::pair<StringRef, unsigned int>(MemName, Num));
-                outs() << "first member: " << Num << " name: " << MemName << "\n";
-              }
-              Number = ConstantInt::get(IntMapSizeTy, Num);
+      SAYF(cCYA "cfg module " cRST);
 
+      for (auto &F : M) {
+
+        bool hasBBs = false;
+        std::string funcName = F.getName();
+
+        /* skip some unralated function */
+        if (isBlacklisted(&F)) {
+          continue;
+        }
+
+        for (auto &BB : F) {
+          std::string BBName("");
+          std::string filename;
+          unsigned line = 0;
+
+          for (auto &I : BB) {
+
+            getDebugLoc(&I, filename, line);
+
+            /* skip external libs */
+            static const std::string externalLibs("/usr/");
+            if (filename.empty() || line == 0 ||
+                !filename.compare(0, externalLibs.size(), externalLibs)) {
+              continue;
             }
 
-            if (SI->getMetadata("labyrinth.label.state_describing.variable")) {
-              IsVariable = true;
-              if (IsMember) {
-                outs() << "Both error\n";
+            /* concat BB name */
+            if (BBName.empty()) {
+              std::size_t found = filename.find_last_of("/\\");
+              if (found != std::string::npos) {
+                filename = filename.substr(found + 1);
               }
-              
-              // get variable number
-              StringRef VarName = PtrValue->getName();
-              if (VariableSet.count(PtrValue)) {
-                Num = VariableSet.at(PtrValue);
-                outs() << "var: " << Num << " name: " << VarName << "\n";
-              } else {
-                Num = AFL_R(MAP_SIZE);
-                VariableSet.insert(std::pair<Value*, unsigned int>(PtrValue, Num));
-                outs() << "first var: " << Num << " name: " << VarName << "\n";
-              }
-              Number = ConstantInt::get(IntMapSizeTy, Num);
+
+              // Basic Block name format
+              BBName = filename + ":" + std::to_string(line);
+              outs() << "BB name: " << BBName << "\n";
             }
 
-
-              if (IsMember || IsVariable){
-
-              // instrumentation
-              IRBuilder<> IRB(SI->getNextNonDebugInstruction());
-              LoadInst *Load = IRB.CreateLoad(PtrValue);
-              
-              // casting float and double into integer
-              Value *Cast = nullptr;
-              Type *ValueTy = Load->getPointerOperandType()->getPointerElementType();
-              if (ValueTy->isPointerTy()) {
-                continue;
-              } else if (ValueTy->isIntegerTy()) {
-                Cast = Load;
-              } else if (ValueTy->isFloatTy()) {
-                Cast = IRB.CreateBitCast(Load, Int32Ty);
-              } else if (ValueTy->isDoubleTy()) {
-                Cast = IRB.CreateBitCast(Load, Int64Ty);
+            /* record basic block called function */
+            if (auto *call = dyn_cast<CallInst>(&I)) {
+              std::size_t found = filename.find_last_not_of("/\\");
+              if (found != std::string::npos) {
+                filename = filename.substr(found + 1);
               }
 
-              // bitwidth transformation
-              Value *Xor = nullptr;
-              if (Cast != nullptr) {
-                IntegerType *IntTy = dyn_cast<IntegerType>(Cast->getType());
-                unsigned bitwidth = IntTy->getBitWidth();
-                if (bitwidth < map_size) {
-                  Cast = IRB.CreateZExt(Cast, IntegerType::getIntNTy(CTX, map_size));
-                } else if (bitwidth > map_size) {
-                  switch (bitwidth)
-                  {
-                  case 64: {
-                    Value *tmp = IRB.CreateTrunc(Cast, Int16Ty);
-                    for (int i = 1; i <= 3; ++i) {
-                      Value *part = IRB.CreateLShr(Cast, 16*i);
-                      part = IRB.CreateTrunc(part, Int16Ty);
-                      tmp = IRB.CreateXor(tmp, part);
-                    }
-                    if (map_size > 16) tmp = IRB.CreateZExt(tmp, IntMapSizeTy);
-                    Cast = tmp;
-                    break;
-                  }
-                  case 32: {
-                    Value *high = IRB.CreateLShr(Cast, 16);
-                    high = IRB.CreateTrunc(high, Int16Ty);
-                    Value *low = IRB.CreateTrunc(Cast, Int16Ty);
-                    Cast = IRB.CreateXor(high, low);
-                    if (map_size > 16) Cast = IRB.CreateZExt(Cast, IntMapSizeTy);
-                    break;
-                  }
-                  default:
-                    Cast = IRB.CreateTrunc(Cast, IntMapSizeTy);
-                    break;
-                  }
+              if (auto *calledFunc = call->getCalledFunction()) {
+                if (!isBlacklisted(calledFunc)) {
+                  // Basic Block call site format
+                  bbcalls << BBName << "," << calledFunc->getName().str()
+                          << "\n";
                 }
-                Xor = IRB.CreateXor(Cast, Number);
-              
-              // other type
-              } else {
-                Xor = Number;
-                outs() << "[pass-log] " << "cast part: other type: " << *Load << "\n";
               }
-
-              // get map idx
-              LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
-              Value *Ext = IRB.CreateZExt(Xor, Int32Ty);
-              Value *MapPtrIdx = IRB.CreateGEP(MapPtr, Ext);
-
-              // update counter
-              LoadInst *Counter = IRB.CreateLoad(MapPtrIdx);
-              Value *Inc = IRB.CreateAdd(Counter, ConstantInt::get(Int8Ty, 1));
-              IRB.CreateStore(Inc, MapPtrIdx);
-              
-              /* log */
-#ifdef PASS_LOG
-              IRBuilder<> IRB2(SI);
-              LoadInst *Before = IRB2.CreateLoad(PtrValue);
-              LoadInst *After = IRB.CreateLoad(PtrValue);
-
-              Type *AfterTy = After->getType();
-              Value *Cmp = nullptr;
-              Value *FormatStrPtr = nullptr;
-              if (AfterTy->isIntegerTy()) {
-                Cmp = IRB.CreateICmpNE(Before, After);
-                FormatStrPtr = IRB.CreatePointerCast(IntFormatStrVar, PrintfArgTy, "IntFormatStr");
-
-              } else if (AfterTy->isFloatTy() || AfterTy->isDoubleTy()) {
-                Cmp = IRB.CreateFCmpUEQ(Before, After);
-                FormatStrPtr = IRB.CreatePointerCast(FltFormatStrVar, PrintfArgTy, "FltFormatStr");
-                
-              } else {
-                outs() << "[pass-log] " << "log part: other type: " << AfterTy->getTypeID() << "\n";
-              }
-
-              if (Cmp != nullptr && FormatStrPtr != nullptr) {
-                Instruction *Split = dyn_cast<Instruction>(Cmp)->getNextNonDebugInstruction();
-                //outs() << "[pass-log] " << "cmp next inst: " << *Split << "\n";
-                auto *ThenTerm = SplitBlockAndInsertIfThen(Cmp, Split, false, nullptr, nullptr, nullptr, nullptr);
-
-                IRB.SetInsertPoint(ThenTerm);
-                Value *ModuleNamePtr = IRB.CreatePointerCast(ModuleNameVar, PrintfArgTy, "ModuleName");
-                StringRef VarName = PtrValue->getName();
-                VarNameNum++;
-                Constant *VarNameStr = ConstantDataArray::getString(CTX, VarName.str());
-                Constant *VarNameStrVar = M.getOrInsertGlobal(".name" + std::to_string(VarNameNum), VarNameStr->getType());
-                if (auto *Var = dyn_cast<GlobalVariable>(VarNameStrVar)) {
-                  if (!Var->hasInitializer())
-                  Var->setInitializer(VarNameStr);
-                  Var->setLinkage(GlobalValue::PrivateLinkage);
-                }
-                Value *VarNameStrPtr = IRB.CreatePointerCast(VarNameStrVar, PrintfArgTy);
-
-                IRB.CreateCall(Printf, {FormatStrPtr, ModuleNamePtr, VarNameStrPtr, Before, After, Ext, Counter});
-              }
-              /* log end */
-#endif
-
-              inst_count++;
             }
+
+          }
+
+          /* set BB's name */
+          if (!BBName.empty()) {
+            BB.setName(BBName + ":");
+            if (!BB.hasName()) {
+              std::string newName = BBName + ":";
+              Twine t(newName);
+              SmallString<256> NameData;
+              StringRef NameRef = t.toStringRef(NameData);
+              BB.setValueName(ValueName::Create(NameRef));
+            }
+
+            bbnames << BB.getName().str() << "\n";
+            outs() << "bbnames: " << BB.getName().str() << "\n";
+            hasBBs = true;
+          }
+        }
+
+        /* generate CFG */
+        if (hasBBs) {
+          std::string cfgFileName = dotfiles + "/cfg." + funcName + ".dot";
+          std::error_code EC;
+          raw_fd_ostream cfgFile(cfgFileName, EC, sys::fs::F_None);
+          if (!EC) {
+            WriteGraph(cfgFile, &F, true);
           }
         }
       }
-      outs() << "function: [" << F.getName() << "] end\n\n";
-    }
-    outs() << "file: [" << M.getModuleIdentifier() << "] end\n";
-    outs() << "=================================================\n";
 
-    OKF("State-Pass Instrumented %u locations.", inst_count);
+    } else {
+      /* traversal */
+      outs() << "file: [" << M.getModuleIdentifier() << "]\n";
+      for (auto &F : M) {
+
+        outs() << "function: [" << F.getName() << "]\n";
+        for (auto &BB : F) {
+
+          for (auto &I : BB) {
+            if (auto *SI = dyn_cast<StoreInst>(&I)) {
+              bool IsMember = false;
+              bool IsVariable = false;
+              Value *PtrValue = SI->getPointerOperand();
+              unsigned map_size = MAP_SIZE_POW2;
+              unsigned int Num;
+              ConstantInt *Number = nullptr;
+
+              if (SI->getMetadata("labyrinth.label.state_describing.member")) {
+                IsMember = true;
+                StringRef MemName = PtrValue->getName();
+                // outs() << "member: " << MemName << "\n";
+
+                // trim member variable number
+                size_t len = MemName.size();
+                for (size_t i = 0; i < len; ++i) {
+                  if (isDigit(MemName[i])) {
+                    MemName = MemName.take_front(i);
+                    // outs() << "trim name: " << MemName << "\n";
+                    break;
+                  }
+                }
+
+                if (MemberSet.count(MemName)) {
+                  Num = MemberSet.at(MemName);
+                  outs() << "member: " << Num << " name:" << MemName << "\n";
+                } else {
+                  Num = AFL_R(MAP_SIZE);
+                  MemberSet.insert(
+                      std::pair<StringRef, unsigned int>(MemName, Num));
+                  outs() << "first member: " << Num << " name: " << MemName
+                         << "\n";
+                }
+                Number = ConstantInt::get(IntMapSizeTy, Num);
+              }
+
+              if (SI->getMetadata(
+                      "labyrinth.label.state_describing.variable")) {
+                IsVariable = true;
+                if (IsMember) {
+                  outs() << "Both error\n";
+                }
+
+                // get variable number
+                StringRef VarName = PtrValue->getName();
+                if (VariableSet.count(PtrValue)) {
+                  Num = VariableSet.at(PtrValue);
+                  outs() << "var: " << Num << " name: " << VarName << "\n";
+                } else {
+                  Num = AFL_R(MAP_SIZE);
+                  VariableSet.insert(
+                      std::pair<Value *, unsigned int>(PtrValue, Num));
+                  outs() << "first var: " << Num << " name: " << VarName
+                         << "\n";
+                }
+                Number = ConstantInt::get(IntMapSizeTy, Num);
+              }
+
+              if (IsMember || IsVariable) {
+
+                // instrumentation
+                IRBuilder<> IRB(SI->getNextNonDebugInstruction());
+                LoadInst *Load = IRB.CreateLoad(PtrValue);
+
+                // casting float and double into integer
+                Value *Cast = nullptr;
+                Type *ValueTy =
+                    Load->getPointerOperandType()->getPointerElementType();
+                if (ValueTy->isPointerTy()) {
+                  continue;
+                } else if (ValueTy->isIntegerTy()) {
+                  Cast = Load;
+                } else if (ValueTy->isFloatTy()) {
+                  Cast = IRB.CreateBitCast(Load, Int32Ty);
+                } else if (ValueTy->isDoubleTy()) {
+                  Cast = IRB.CreateBitCast(Load, Int64Ty);
+                }
+
+                // bitwidth transformation
+                Value *Xor = nullptr;
+                if (Cast != nullptr) {
+                  IntegerType *IntTy = dyn_cast<IntegerType>(Cast->getType());
+                  unsigned bitwidth = IntTy->getBitWidth();
+                  if (bitwidth < map_size) {
+                    Cast = IRB.CreateZExt(
+                        Cast, IntegerType::getIntNTy(CTX, map_size));
+                  } else if (bitwidth > map_size) {
+                    switch (bitwidth) {
+                    case 64: {
+                      Value *tmp = IRB.CreateTrunc(Cast, Int16Ty);
+                      for (int i = 1; i <= 3; ++i) {
+                        Value *part = IRB.CreateLShr(Cast, 16 * i);
+                        part = IRB.CreateTrunc(part, Int16Ty);
+                        tmp = IRB.CreateXor(tmp, part);
+                      }
+                      if (map_size > 16)
+                        tmp = IRB.CreateZExt(tmp, IntMapSizeTy);
+                      Cast = tmp;
+                      break;
+                    }
+                    case 32: {
+                      Value *high = IRB.CreateLShr(Cast, 16);
+                      high = IRB.CreateTrunc(high, Int16Ty);
+                      Value *low = IRB.CreateTrunc(Cast, Int16Ty);
+                      Cast = IRB.CreateXor(high, low);
+                      if (map_size > 16)
+                        Cast = IRB.CreateZExt(Cast, IntMapSizeTy);
+                      break;
+                    }
+                    default:
+                      Cast = IRB.CreateTrunc(Cast, IntMapSizeTy);
+                      break;
+                    }
+                  }
+                  Xor = IRB.CreateXor(Cast, Number);
+
+                  // other type
+                } else {
+                  Xor = Number;
+                  outs() << "[pass-log] "
+                         << "cast part: other type: " << *Load << "\n";
+                }
+
+                // get map idx
+                LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
+                Value *Ext = IRB.CreateZExt(Xor, Int32Ty);
+                Value *MapPtrIdx = IRB.CreateGEP(MapPtr, Ext);
+
+                // update counter
+                LoadInst *Counter = IRB.CreateLoad(MapPtrIdx);
+                Value *Inc =
+                    IRB.CreateAdd(Counter, ConstantInt::get(Int8Ty, 1));
+                IRB.CreateStore(Inc, MapPtrIdx);
+
+                /* log */
+#ifdef PASS_LOG
+                IRBuilder<> IRB2(SI);
+                LoadInst *Before = IRB2.CreateLoad(PtrValue);
+                LoadInst *After = IRB.CreateLoad(PtrValue);
+
+                Type *AfterTy = After->getType();
+                Value *Cmp = nullptr;
+                Value *FormatStrPtr = nullptr;
+                if (AfterTy->isIntegerTy()) {
+                  Cmp = IRB.CreateICmpNE(Before, After);
+                  FormatStrPtr = IRB.CreatePointerCast(
+                      IntFormatStrVar, PrintfArgTy, "IntFormatStr");
+
+                } else if (AfterTy->isFloatTy() || AfterTy->isDoubleTy()) {
+                  Cmp = IRB.CreateFCmpUEQ(Before, After);
+                  FormatStrPtr = IRB.CreatePointerCast(
+                      FltFormatStrVar, PrintfArgTy, "FltFormatStr");
+
+                } else {
+                  outs() << "[pass-log] "
+                         << "log part: other type: " << AfterTy->getTypeID()
+                         << "\n";
+                }
+
+                if (Cmp != nullptr && FormatStrPtr != nullptr) {
+                  Instruction *Split =
+                      dyn_cast<Instruction>(Cmp)->getNextNonDebugInstruction();
+                  // outs() << "[pass-log] " << "cmp next inst: " << *Split <<
+                  // "\n";
+                  auto *ThenTerm = SplitBlockAndInsertIfThen(
+                      Cmp, Split, false, nullptr, nullptr, nullptr, nullptr);
+
+                  IRB.SetInsertPoint(ThenTerm);
+                  Value *ModuleNamePtr = IRB.CreatePointerCast(
+                      ModuleNameVar, PrintfArgTy, "ModuleName");
+                  StringRef VarName = PtrValue->getName();
+                  VarNameNum++;
+                  Constant *VarNameStr =
+                      ConstantDataArray::getString(CTX, VarName.str());
+                  Constant *VarNameStrVar =
+                      M.getOrInsertGlobal(".name" + std::to_string(VarNameNum),
+                                          VarNameStr->getType());
+                  if (auto *Var = dyn_cast<GlobalVariable>(VarNameStrVar)) {
+                    if (!Var->hasInitializer())
+                      Var->setInitializer(VarNameStr);
+                    Var->setLinkage(GlobalValue::PrivateLinkage);
+                  }
+                  Value *VarNameStrPtr =
+                      IRB.CreatePointerCast(VarNameStrVar, PrintfArgTy);
+
+                  IRB.CreateCall(Printf,
+                                 {FormatStrPtr, ModuleNamePtr, VarNameStrPtr,
+                                  Before, After, Ext, Counter});
+                }
+                /* log end */
+#endif
+
+                inst_count++;
+              }
+            }
+          }
+        }
+        outs() << "function: [" << F.getName() << "] end\n\n";
+      }
+      outs() << "file: [" << M.getModuleIdentifier() << "] end\n";
+      outs() << "=================================================\n";
+
+      OKF("State-Pass Instrumented %u locations.", inst_count);
+    }
 
     if (inst_count)
       Instrumented = true;
