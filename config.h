@@ -237,6 +237,8 @@
    100,          /* One-off with common buffer size         */ \
    127           /* Overflow signed 8-bit when incremented  */
 
+#define INTERESTING_8_LEN 9
+
 #define INTERESTING_16 \
   -32768,        /* Overflow signed 16-bit when decremented */ \
   -129,          /* Overflow signed 8-bit                   */ \
@@ -249,6 +251,8 @@
    4096,         /* One-off with common buffer size         */ \
    32767         /* Overflow signed 16-bit when incremented */
 
+#define INTERESTING_16_LEN 10
+
 #define INTERESTING_32 \
   -2147483648LL, /* Overflow signed 32-bit when decremented */ \
   -100663046,    /* Large negative number (endian-agnostic) */ \
@@ -258,6 +262,8 @@
    65536,        /* Overflow unsig 16 bit                   */ \
    100663045,    /* Large positive number (endian-agnostic) */ \
    2147483647    /* Overflow signed 32-bit when incremented */
+
+#define INTERESTING_32_LEN 8
 
 /***********************************************************
  *                                                         *
