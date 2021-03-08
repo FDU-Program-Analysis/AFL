@@ -57,7 +57,7 @@
    is used for instrumentation output before __afl_map_shm() has a chance to run.
    It will end up as .comm, so it shouldn't be too wasteful. */
 
-u8  __afl_area_initial[MAP_SIZE];
+u8  __afl_area_initial[MAP_SIZE + 16];
 u8  __afl_state_area_initial[MAP_SIZE];
 u8* __afl_area_ptr = __afl_area_initial;
 u8* __state_map_ptr = __afl_state_area_initial;
@@ -214,7 +214,7 @@ int __afl_persistent_loop(unsigned int max_cnt) {
 
     if (is_persistent) {
 
-      memset(__afl_area_ptr, 0, MAP_SIZE);
+      memset(__afl_area_ptr, 0, MAP_SIZE + 16);
       memset(__state_map_ptr, 0, MAP_SIZE);
       __afl_area_ptr[0] = 1;
       __state_map_ptr[0] = 1;
