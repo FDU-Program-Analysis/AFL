@@ -741,7 +741,7 @@ u8 run_target(char** argv, u32 timeout) {
    error conditions, returning 1 if it's time to bail out. This is
    a helper function for fuzz_one(). */
 
-u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len, cJSON* json) {
+u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len, Chunk* tree) {
   u8 fault;
 
   if (post_handler) {
@@ -774,7 +774,7 @@ u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len, cJSON* json) {
   }
 
   /* This handles FAULT_ERROR for us: */
-  queued_discovered += save_if_interesting(argv, out_buf, len, fault, json);
+  queued_discovered += save_if_interesting(argv, out_buf, len, fault, tree, NULL);
 
   if (!(stage_cur % stats_update_freq) || stage_cur + 1 == stage_max)
     show_stats();

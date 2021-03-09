@@ -122,13 +122,14 @@ void cull_queue(void) {
 
 /* Append new test case to the queue. */
 
-void add_to_queue(u8* fname, u8* format_file, u32 len, u8 passed_det) {
+void add_to_queue(u8* fname, u8* format_file, u8* track_file, u32 len, u8 passed_det) {
   struct queue_entry* q = ck_alloc(sizeof(struct queue_entry));
 
   /*Need to change*/
   q->fname = fname;
   q->len = len;
   q->format_file = format_file;
+  q->track_file = track_file;
   q->depth = cur_depth + 1;
   q->passed_det = passed_det;
 
@@ -162,6 +163,9 @@ void destroy_queue(void) {
     n = q->next;
     ck_free(q->fname);
     ck_free(q->format_file);
+    if(q->track_file) {
+      ck_free(q->track_file);
+    }
     ck_free(q->trace_mini);
     ck_free(q);
     q = n;
@@ -232,10 +236,12 @@ void sync_fuzzers(char** argv) {
        at it before; exec a test case if not. */
 
     while ((qd_ent = readdir(qd))) {
-      u8 *path, *format_path;
-      s32 fd, format_fd;
+      u8 *path, *format_path, *track_path;
+      s32 fd, format_fd, track_fd;
       struct stat st;
-      cJSON* json;
+      cJSON *json;
+      Chunk *tree;
+      Track *track;
 
       if (qd_ent->d_name[0] == '.' ||
           sscanf(qd_ent->d_name, CASE_PREFIX "%06u", &syncing_case) != 1 ||
@@ -247,6 +253,11 @@ void sync_fuzzers(char** argv) {
       if (file_type != NULL && strcmp(file_type, ".json") == 0) {
         continue;
       }
+      
+      /* Skip .track file */
+      if (file_type != NULL && strcmp(file_type, ".track") == 0) {
+        continue;
+      }
 
       /* OK, sounds like a new one. Let's give it a try. */
 
@@ -255,6 +266,8 @@ void sync_fuzzers(char** argv) {
       path = alloc_printf("%s/%s", qd_path, qd_ent->d_name);
 
       format_path = alloc_printf("%s/%s.json", qd_path, qd_ent->d_name);
+
+      track_path = alloc_printf("%s/%s.track", qd_path, qd_ent->d_name);
 
       /* Allow this to fail in case the other fuzzer is resuming or so... */
 
@@ -273,6 +286,11 @@ void sync_fuzzers(char** argv) {
         continue;
       }
 
+      track_fd = open(track_path, O_RDONLY);
+      if(track_fd < 0) {
+        ck_free(target_path);
+      }
+
       if (fstat(fd, &st)) PFATAL("fstat() failed");
 
       /* Ignore zero-sized or oversized files. */
@@ -283,6 +301,9 @@ void sync_fuzzers(char** argv) {
 
         if (mem == MAP_FAILED) PFATAL("Unable to mmap '%s'", path);
         json = parse_json(format_path);
+        tree = json_to_tree(json);
+
+        track = NULL;
 
         /* See what happens. We rely on save_if_interesting() to catch major
            errors and save the test case. */
@@ -295,11 +316,12 @@ void sync_fuzzers(char** argv) {
 
         syncing_party = sd_ent->d_name;
         queued_imported +=
-            save_if_interesting(argv, mem, st.st_size, fault, json);
+            save_if_interesting(argv, mem, st.st_size, fault, tree, track);
         syncing_party = 0;
 
         munmap(mem, st.st_size);
         cJSON_Delete(json);
+        free_tree(tree, True);
 
         if (!(stage_cur++ % stats_update_freq)) show_stats();
       }

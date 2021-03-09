@@ -1,0 +1,284 @@
+2021年 02月 20日 星期六 23:52:06 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/png/input
+2021年 02月 20日 星期六 23:52:21 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/png/input
+2021年 02月 20日 星期六 23:56:04 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/png/input
+2021年 02月 20日 星期六 23:56:10 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/png/input
+2021年 02月 21日 星期日 05:56:14 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/png/input
+2021年 02月 21日 星期日 05:56:20 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/png/input
+break
+2021年 02月 21日 星期日 11:56:14 CST
+break
+2021年 02月 21日 星期日 11:56:20 CST
+2021年 02月 21日 星期日 17:10:19 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/opj_decompress, -i @@ -o /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/jp2/out.png, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/jp2/input
+2021年 02月 21日 星期日 17:10:22 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/opj_decompress, -i @@ -o /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/jp2/out.png, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/jp2/input
+2021年 02月 21日 星期日 23:10:29 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/opj_decompress, -i @@ -o /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/jp2/out.png, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/jp2/input
+2021年 02月 21日 星期日 23:10:32 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/opj_decompress, -i @@ -o /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/jp2/out.png, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/jp2/input
+2021年 02月 22日 星期一 05:10:39 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/mpg321, --stdout @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/mp3/input
+2021年 02月 22日 星期一 05:10:42 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/mpg321, --stdout @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/mp3/input
+2021年 02月 22日 星期一 11:10:49 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/wavpack, -y @@ -o /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/wav/out-dir, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/wav/input
+2021年 02月 22日 星期一 11:10:52 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/wavpack, -y @@ -o /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/wav/out-dir, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/wav/input
+break
+2021年 02月 22日 星期一 17:10:49 CST
+break
+2021年 02月 22日 星期一 17:10:52 CST
+2021年 02月 23日 星期二 10:01:10 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 10:01:18 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 10:01:18 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 10:01:18 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 10:01:18 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 10:01:18 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+2021年 02月 23日 星期二 10:01:18 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+break
+2021年 02月 23日 星期二 10:01:18 CST
+2021年 02月 23日 星期二 10:02:47 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 10:02:47 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 10:02:47 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 10:02:47 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 10:02:47 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+2021年 02月 23日 星期二 10:02:47 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+break
+2021年 02月 23日 星期二 10:02:47 CST
+2021年 02月 23日 星期二 10:06:51 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 10:06:51 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 10:06:51 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 10:06:51 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 10:06:51 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+2021年 02月 23日 星期二 10:06:51 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+break
+2021年 02月 23日 星期二 10:06:51 CST
+2021年 02月 23日 星期二 10:13:49 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 10:13:49 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 10:13:49 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 10:13:49 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 10:13:49 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+2021年 02月 23日 星期二 10:13:49 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+break
+2021年 02月 23日 星期二 10:13:49 CST
+2021年 02月 23日 星期二 10:14:28 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 10:14:32 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 16:14:39 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 16:14:42 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 16:37:18 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 17:05:51 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 17:06:16 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 17:08:26 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+2021年 02月 23日 星期二 17:10:10 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+2021年 02月 23日 星期二 18:17:08 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 18:17:10 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 18:17:21 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 18:22:44 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 18:23:08 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 18:23:18 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 18:37:26 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 18:37:29 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 23日 星期二 18:55:27 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 19:43:32 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 19:43:35 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 21:58:47 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+break
+2021年 02月 23日 星期二 22:22:32 CST
+2021年 02月 23日 星期二 22:35:09 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 23日 星期二 22:35:09 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+break
+2021年 02月 23日 星期二 22:35:09 CST
+2021年 02月 24日 星期三 09:35:36 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 24日 星期三 09:35:36 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+break
+2021年 02月 24日 星期三 09:35:36 CST
+2021年 02月 24日 星期三 20:26:16 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 24日 星期三 20:26:19 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 24日 星期三 20:27:26 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 24日 星期三 20:27:29 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 24日 星期三 20:28:36 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+2021年 02月 24日 星期三 20:28:39 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+break
+2021年 02月 24日 星期三 20:29:36 CST
+break
+2021年 02月 24日 星期三 20:29:39 CST
+2021年 02月 24日 星期三 20:31:03 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 24日 星期三 20:31:08 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/png/input
+2021年 02月 25日 星期四 02:31:13 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 25日 星期四 02:31:18 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/jpeg/input
+2021年 02月 25日 星期四 08:31:23 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+2021年 02月 25日 星期四 08:31:29 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/chunk-afl/mp4/input
+2021年 02月 25日 星期四 14:48:13 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/afl-install/bin/opj_decompress, -i @@ -o /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/jp2/out.png, /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/jp2/input
+break
+2021年 02月 25日 星期四 14:48:13 CST
+2021年 02月 26日 星期五 20:11:21 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasperout.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasper/input
+2021年 02月 26日 星期五 20:12:21 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/mp4/input
+2021年 02月 26日 星期五 20:13:21 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/png/input
+2021年 02月 26日 星期五 20:13:21 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jpeg/input
+break
+2021年 02月 26日 星期五 20:14:21 CST
+2021年 02月 26日 星期五 20:38:18 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/png/input
+2021年 02月 26日 星期五 20:38:19 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasperout.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasper/input
+2021年 02月 26日 星期五 20:52:52 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/png/input
+2021年 02月 26日 星期五 20:53:52 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasperout.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasper/input
+2021年 02月 26日 星期五 20:54:52 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/mp4/input
+2021年 02月 26日 星期五 20:55:52 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jpeg/input
+break
+2021年 02月 26日 星期五 20:56:52 CST
+2021年 02月 26日 星期五 20:57:34 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasperout.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasper/input
+2021年 02月 26日 星期五 20:57:34 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/mp4/input
+2021年 02月 26日 星期五 20:58:34 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/png/input
+2021年 02月 26日 星期五 20:59:34 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jpeg/input
+break
+2021年 02月 26日 星期五 21:00:34 CST
+2021年 02月 26日 星期五 21:04:07 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasperout.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasper/input
+break
+2021年 02月 26日 星期五 21:05:07 CST
+2021年 02月 26日 星期五 21:07:24 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/png/input
+2021年 02月 26日 星期五 21:07:32 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasperout2.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasper/input
+2021年 02月 26日 星期五 21:07:52 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasperout.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasper/input
+2021年 02月 26日 星期五 21:08:07 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasperout.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasper/input
+2021年 02月 26日 星期五 21:10:23 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/mp4/input
+2021年 02月 26日 星期五 21:10:30 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/mp4/input
+2021年 02月 26日 星期五 21:11:01 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/png/input
+2021年 02月 26日 星期五 21:11:07 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/png/input
+2021年 02月 26日 星期五 21:12:08 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jpeg/input
+2021年 02月 26日 星期五 21:12:15 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jpeg/input
+break
+2021年 02月 26日 星期五 21:12:15 CST
+break
+2021年 02月 26日 星期五 21:13:18 CST
+2021年 02月 26日 星期五 21:15:43 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/png/input
+2021年 02月 26日 星期五 21:15:52 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/png/input
+2021年 02月 26日 星期五 21:16:45 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasperout.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasper/input
+2021年 02月 26日 星期五 21:16:55 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasperout.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jasper/input
+2021年 02月 26日 星期五 23:15:53 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasperout.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasper/input
+2021年 02月 26日 星期五 23:16:02 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/jasper, -f @@ -t jp2 -F /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasperout.jpg -T jpg, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jasper/input
+2021年 02月 26日 星期五 23:16:55 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/mp4/input
+2021年 02月 26日 星期五 23:17:05 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/mp4/input
+2021年 02月 27日 星期六 01:16:03 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/mp4/input
+2021年 02月 27日 星期六 01:16:12 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/ffmpeg, -i @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/mp4/input
+2021年 02月 27日 星期六 01:17:05 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/png/input
+2021年 02月 27日 星期六 01:17:15 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/pngpixel, 0 0 @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/png/input
+2021年 02月 27日 星期六 03:16:13 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jpeg/input
+2021年 02月 27日 星期六 03:16:22 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflfast-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflfast/jpeg/input
+2021年 02月 27日 星期六 03:17:15 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jpeg/input
+2021年 02月 27日 星期六 03:17:25 CST
+,/home/dp/Documents/install/fuzzing/chunk-afl-evaluation/aflplusplus-install/bin/djpeg, @@, /home/dp/Documents/fuzzing/chunk-afl-evaluation/aflplusplus/jpeg/input
+break
+2021年 02月 27日 星期六 05:16:13 CST
+break
+2021年 02月 27日 星期六 05:16:22 CST
+break
+2021年 02月 27日 星期六 05:17:15 CST
+break
+2021年 02月 27日 星期六 05:17:25 CST

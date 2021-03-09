@@ -69,8 +69,8 @@ afl-as: afl-as.c afl-as.h $(COMM_HDR) | test_x86
 	$(CC) $(CFLAGS) $@.c -o $@ $(LDFLAGS)
 	ln -sf afl-as as
 
-afl-fuzz: afl-fuzz.c cJSON.c globals.c bitmap.c  extras.c  fuzz_one.c  init.c  queue.c  run.c  signals.c  stats.c  utils.c  pre_fuzz.c $(COMM_HDR) | test_x86
-	$(CC) $(CFLAGS) $@.c cJSON.c globals.c  bitmap.c  extras.c  fuzz_one.c  init.c  queue.c  run.c  signals.c  stats.c  utils.c  pre_fuzz.c -o $@ $(LDFLAGS)
+afl-fuzz: afl-fuzz.c cJSON.c hashMap.c globals.c bitmap.c  extras.c  fuzz_one.c  init.c  queue.c  run.c  signals.c  stats.c  utils.c  pre_fuzz.c $(COMM_HDR) | test_x86
+	$(CC) $(CFLAGS) $@.c cJSON.c hashMap.c globals.c  bitmap.c  extras.c  fuzz_one.c  init.c  queue.c  run.c  signals.c  stats.c  utils.c  pre_fuzz.c -o $@ $(LDFLAGS)
 
 afl-showmap: afl-showmap.c $(COMM_HDR) | test_x86
 	$(CC) $(CFLAGS) $@.c -o $@ $(LDFLAGS)

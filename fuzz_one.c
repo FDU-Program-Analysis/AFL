@@ -1,12 +1,9 @@
 #include "afl-fuzz.h"
 
-
-#define CHUNK_START(chunk) ((cJSON*)chunk)->child->valueint
-#define CHUNK_END(chunk) ((cJSON*)chunk)->child->next->valueint
 #define CHUNK_ID_START(chunk) \
-  ((cJSON*)chunk)->child->next->next->child->valueint
+  ((cJSON *)chunk)->child->next->next->child->valueint
 #define CHUNK_ID_END(chunk) \
-  ((cJSON*)chunk)->child->next->next->child->next->valueint
+  ((cJSON *)chunk)->child->next->next->child->next->valueint
 
 /* Helper function to see if a particular change (xor_val = old ^ new) could
    be a product of deterministic bit flips with the lengths and stepovers
@@ -171,188 +168,428 @@ static u8 could_be_interest(u32 old_val, u32 new_val, u8 blen, u8 check_le) {
   return 0;
 }
 
-u8* insert_chunk(u8* buf, u32* len, cJSON* cjson_head, u32 chunk_index,
-                 u32 insert_index) {
-  u32 clone_to, clone_len;
-  cJSON* cjson_iter;
-
-  cJSON* chunk_choose = cjson_head->child;
-  for (u8 i = 0; i < chunk_index; i++) {
-    chunk_choose = chunk_choose->next;
+int32_t get_json_start(const cJSON *chunk) {
+  if (cJSON_HasObjectItem(chunk, "start")) {
+    return cJSON_GetObjectItemCaseSensitive(chunk, "start")->valueint;
   }
+  return -1;
+}
 
-  clone_len = CHUNK_END(chunk_choose) - CHUNK_START(chunk_choose);
-
-  if (clone_len == 0) {
-    cJSON_DetachItemFromArray(cjson_head, chunk_index);
-    return buf;
+int32_t get_json_end(const cJSON *chunk) {
+  if (cJSON_HasObjectItem(chunk, "end")) {
+    return cJSON_GetObjectItemCaseSensitive(chunk, "end")->valueint;
   }
+  return -1;
+}
 
-  u8* new_buf;
-  new_buf = ck_alloc_nozero(*len + clone_len);
-  if (insert_index == 0) {
-    clone_to = 0;
-  } else {
-    cJSON* chunk_insert = cjson_head->child;
-    for (u8 i = 0; i < insert_index - 1; i++) {
-      chunk_insert = chunk_insert->next;
+uint8_t *get_json_type(const cJSON *chunk) {
+  if (cJSON_HasObjectItem(chunk, "type")) {
+    return cJSON_GetObjectItemCaseSensitive(chunk, "type")->valuestring;
+  }
+  return NULL;
+}
+
+uint32_t get_chunk_abs_start(const Chunk *chunk) {
+  uint32_t start = chunk->start;
+  const Chunk *father;
+  father = chunk->father;
+  while (father) {
+    start += father->start;
+    father = father->father;
+  }
+  return start;
+}
+
+uint32_t get_chunk_abs_end(const Chunk *chunk) {
+  uint32_t end = chunk->end;
+  const Chunk *father;
+  father = chunk->father;
+  while (father) {
+    end += father->start;
+    father = father->father;
+  }
+  return end;
+}
+
+Node *get_node_list(Chunk *tree) {
+  Chunk *iter;
+  Node *head, *top;
+  head = top = NULL;
+  iter = tree;
+  while (iter) {
+    if (iter->son == NULL) {
+      Node *node = ck_alloc(sizeof(Node));
+      node->start = get_chunk_abs_start(iter);
+      node->end = get_chunk_abs_end(iter);
+      if (top) {
+        top->next = node;
+        top = node;
+      } else {
+        head = top = node;
+      }
+    } else {
+      if (top) {
+        top->next = get_node_list(iter->son);
+      } else {
+        head = top = get_node_list(iter->son);
+      }
+      while (top->next) {
+        top = top->next;
+      }
     }
-    clone_to = CHUNK_END(chunk_insert);
+    iter = iter->next;
   }
-  memcpy(new_buf, buf, clone_to);
-  memcpy(new_buf + clone_to, buf + CHUNK_START(chunk_choose), clone_len);
-  memcpy(new_buf + clone_to + clone_len, buf + clone_to, *len - clone_to);
-
-  *len += clone_len;
-
-  cJSON* chunk_dup = cJSON_Duplicate(chunk_choose, 1);
-  cJSON_InsertItemInArray(cjson_head, insert_index, chunk_dup);
-  cJSON_SetIntValue(chunk_dup->child, clone_to);
-  cJSON_SetIntValue(chunk_dup->child->next, CHUNK_START(chunk_dup) + clone_len);
-  cjson_iter = chunk_dup->next;
-  while (cjson_iter) {
-    cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) + clone_len);
-    cJSON_SetIntValue(cjson_iter->child->next,
-                      CHUNK_END(cjson_iter) + clone_len);
-    cjson_iter = cjson_iter->next;
-  }
-
-  ck_free(buf);
-  return new_buf;
+  return head;
 }
 
-u8* delete_chunk(u8* buf, u32* len, cJSON* cjson_head, uint32_t delete_index) {
-  u32 clone_to;
-  cJSON* cjson_iter;
-  cJSON* chunk_delete = cjson_head->child;
-  for (u8 i = 0; i < delete_index; i++) {
-    chunk_delete = chunk_delete->next;
+void free_node_list(Node *head) {
+  Node *item = NULL;
+  while (head) {
+    item = head->next;
+    ck_free(head);
+    head = item;
   }
-  u32 delete_len = CHUNK_END(chunk_delete) - CHUNK_START(chunk_delete);
-
-  u8* new_buf;
-  new_buf = ck_alloc_nozero(*len - delete_len);
-  clone_to = CHUNK_START(chunk_delete);
-  memcpy(new_buf, buf, clone_to);
-  memcpy(new_buf + clone_to, buf + clone_to + delete_len,
-         *len - clone_to - delete_len);
-
-  *len -= delete_len;
-
-  cjson_iter = chunk_delete->next;
-  while (cjson_iter) {
-    cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) - delete_len);
-    cJSON_SetIntValue(cjson_iter->child->next,
-                      CHUNK_END(cjson_iter) - delete_len);
-    cjson_iter = cjson_iter->next;
-  }
-
-  cJSON_DetachItemViaPointer(cjson_head, chunk_delete);
-  cJSON_Delete(chunk_delete);
-
-  ck_free(buf);
-  return new_buf;
 }
 
-u8* exchange_chunk(uint8_t* buf, u32 len, cJSON* cjson_head, u32 index1,
-                   u32 index2) {
-  cJSON* cjson_iter;
-  cJSON* cjson_fro;
-  cJSON* cjson_aft;
-  u32 temp;
-  if (index1 == index2) {
-    return buf;
-  }
-  if (index2 < index1) {
-    temp = index1;
-    index1 = index2;
-    index2 = temp;
-  }
-  cjson_fro = cjson_head->child;
-  for (u32 i = 0; i < index1; i++) {
-    cjson_fro = cjson_fro->next;
-  }
-  cjson_aft = cjson_fro;
-  for (u32 i = index1; i < index2; i++) {
-    cjson_aft = cjson_aft->next;
-  }
-  cJSON_DetachItemViaPointer(cjson_head, cjson_fro);
-  cJSON_DetachItemViaPointer(cjson_head, cjson_aft);
+void generate_id(char *random_str) {
+  int i, random_num, seed_str_len, len;
+  struct timeval tv;
+  unsigned int seed_num;
+  char seed_str[] =
+      "abcdefghijklmnopqrstuvwxyz"
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-  cJSON_InsertItemInArray(cjson_head, index1, cjson_aft);
-  cJSON_InsertItemInArray(cjson_head, index2, cjson_fro);
+  seed_str_len = strlen(seed_str);
 
-  u8* new_buf;
-  new_buf = ck_alloc_nozero(len);
-  memcpy(new_buf, buf, CHUNK_START(cjson_fro));
-  memcpy(new_buf + CHUNK_START(cjson_fro), buf + CHUNK_START(cjson_aft),
-         CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft));
-  memcpy(new_buf + CHUNK_START(cjson_fro) + CHUNK_END(cjson_aft) -
-             CHUNK_START(cjson_aft),
-         buf + CHUNK_END(cjson_fro),
-         CHUNK_START(cjson_aft) - CHUNK_END(cjson_fro));
-  memcpy(new_buf + CHUNK_START(cjson_fro) + CHUNK_END(cjson_aft) -
-             CHUNK_END(cjson_fro),
-         buf + CHUNK_START(cjson_fro),
-         CHUNK_END(cjson_fro) - CHUNK_START(cjson_fro));
-  memcpy(new_buf + CHUNK_END(cjson_aft), buf + CHUNK_END(cjson_aft),
-         len - CHUNK_END(cjson_aft));
-  u32 aft_end;
-  aft_end = CHUNK_END(cjson_aft);
-  cJSON_SetIntValue(
-      cjson_aft->child->next,
-      CHUNK_START(cjson_fro) + CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft));
-  cJSON_SetIntValue(cjson_aft->child, CHUNK_START(cjson_fro));
-  cjson_iter = cjson_aft->next;
-  u32 gap = CHUNK_END(cjson_aft) - CHUNK_START(cjson_aft) -
-            CHUNK_END(cjson_fro) + CHUNK_START(cjson_fro);
-  while (!cJSON_Compare(cjson_iter, cjson_fro, 1)) {
-    cJSON_SetIntValue(cjson_iter->child, CHUNK_START(cjson_iter) + gap);
-    cJSON_SetIntValue(cjson_iter->child->next, CHUNK_END(cjson_iter) + gap);
-    cjson_iter = cjson_iter->next;
+  gettimeofday(&tv, NULL);
+  seed_num = (unsigned int)(tv.tv_sec + tv.tv_usec);
+  srand(seed_num);
+
+  len = strlen(random_str);
+  for (i = 0; i < len; i++) {
+    random_num = rand() % seed_str_len;
+    random_str[i] = seed_str[random_num];
   }
-  u32 fro_len;
-  fro_len = CHUNK_END(cjson_fro) - CHUNK_START(cjson_fro);
-  cJSON_SetIntValue(cjson_fro->child->next, aft_end);
-  cJSON_SetIntValue(cjson_fro->child, aft_end - fro_len);
-
-  ck_free(buf);
-  return new_buf;
 }
 
-void replace_chunk_id(uint8_t* buf, cJSON* cjson_head, uint32_t chunk_index,
-                      uint8_t* new_id, uint32_t len) {
-  cJSON* cjson_iter;
-  cjson_iter = cjson_head->child;
-  for (uint32_t i = 0; i < chunk_index; i++) {
-    cjson_iter = cjson_iter->next;
+Chunk *json_to_tree(cJSON *cjson_head) {
+  uint32_t chunk_num = cJSON_GetArraySize(cjson_head);
+  Chunk *head, *top, *iter;
+  head = top = NULL;
+  for (uint32_t i = 0; i < chunk_num; i++) {
+    cJSON *chunk = cJSON_GetArrayItem(cjson_head, i);
+    if (!chunk) {
+      continue;
+    }
+    int32_t start = get_json_start(chunk);
+    int32_t end = get_json_end(chunk);
+    if (start < 0 || end < 0) {
+      continue;
+    }
+    Chunk *node = ck_alloc(sizeof(Chunk));
+    node->start = start;
+    node->end = end;
+    node->id = (uint8_t *)ck_alloc(strlen(chunk->string) + 1);
+    strcpy(node->id, chunk->string);
+    node->father = node->son = node->prev = node->next = NULL;
+    node->cons = NULL;
+    if (top) {
+      top->next = node;
+      node->prev = top;
+      top = node;
+    } else {
+      head = top = node;
+    }
+    if (cJSON_HasObjectItem(chunk, "son")) {
+      top->son = json_to_tree(cJSON_GetObjectItemCaseSensitive(chunk, "son"));
+      iter = top->son;
+      while (iter) {
+        iter->father = top;
+        iter = iter->next;
+      }
+    }
   }
-  if ((CHUNK_START(cjson_iter) + CHUNK_ID_END(cjson_iter)) >
-      CHUNK_END(cjson_iter)) {
-    return;
-  }
-  if ((CHUNK_START(cjson_iter) + CHUNK_ID_START(cjson_iter)) >
-      CHUNK_END(cjson_iter)) {
-    return;
-  }
-  if ((CHUNK_START(cjson_iter) + CHUNK_ID_START(cjson_iter) + len) >
-      CHUNK_END(cjson_iter)) {
-    return;
-  }
-  memcpy(buf + CHUNK_START(cjson_iter) + CHUNK_ID_START(cjson_iter), new_id,
-         len);
-   
-  cJSON_SetValuestring(
-      cJSON_GetObjectItemCaseSensitive(
-          cJSON_GetObjectItemCaseSensitive(cjson_iter, "id"), "name"),
-      new_id);
+  return head;
 }
 
+Chunk *get_tree(cJSON *cjson_head) {
+  Chunk *head, *root, *iter;
+  uint32_t end;
+  head = json_to_tree(cjson_head);
+  if (head->next) {
+    root = ck_alloc(sizeof(Chunk));
+    root->son = head;
+    root->start = head->start;
+    iter = head;
+    while (iter) {
+      iter->father = root;
+      end = iter->end;
+      iter = iter->next;
+    }
+    root->end = end;
+    root->id = "root";
+  } else {
+    root = head;
+  }
+  return root;
+}
 
-cJSON* parse_json(const u8* format_file) {
-  cJSON* cjson_head;
+cJSON *tree_to_json(Chunk *chunk_head) {
+  Chunk *iter;
+  iter = chunk_head;
+  cJSON *json_head;
+  json_head = cJSON_CreateObject();
+  while (iter) {
+    cJSON *cjson = cJSON_CreateObject();
+    cJSON_AddNumberToObject(cjson, "start", iter->start);
+    cJSON_AddNumberToObject(cjson, "end", iter->end);
+    if (iter->son) {
+      cJSON_AddItemToObject(cjson, "son", tree_to_json(iter->son));
+    }
+    cJSON_AddItemToObject(json_head, iter->id, cjson);
+    iter = iter->next;
+  }
+  return json_head;
+}
+
+void tree_add_map(Chunk *head, HashMap map) {
+  Chunk *iter = head;
+  while (iter) {
+    map->put(map, iter->id, iter);
+    if (iter->son) {
+      tree_add_map(iter->son, map);
+    }
+    iter = iter->next;
+  }
+}
+
+void free_tree(Chunk *head, Boolean recurse) {
+  Chunk *iter = NULL;
+  while (head) {
+    if (recurse) {
+      iter = head->next;
+    } else {
+      iter = NULL;
+    }
+    ck_free(head->id);
+    head->id = NULL;
+    if (head->son) {
+      free_tree(head->son, True);
+    }
+    ck_free(head);
+    head = iter;
+  }
+}
+
+Track *parse_track_file(uint8_t *path) {
+  FILE *fp;
+  uint8_t buffer[1024];
+  uint8_t *delim, *id1, *id2, *type, *n;
+  uint32_t num, i;
+  Track *track;
+  Enum *enum_top = NULL;
+  Offset *offset_top = NULL;
+  Length *length_top = NULL;
+  Constraint *cons_top = NULL;
+  track = ck_alloc(sizeof(struct Track));
+  delim = "(),{} ";
+  if ((fp = fopen(path, "r")) == NULL) {
+    PFATAL("Unable to access %s\n", path);
+  }
+  while (!feof(fp)) {
+    n = fgets(buffer, 1024, fp);
+    if (n == NULL) {
+      PFATAL("fgets() error on %s\n", path);
+    }
+    id1 = strtok(buffer, delim);
+    id2 = strtok(NULL, delim);
+    type = strtok(NULL, delim);
+    if (strcmp(type, "Enum") == 0) {
+      uint8_t *candidate;
+      num = atoi(strtok(NULL, delim));
+      Enum *enum_chunk = ck_alloc(sizeof(struct Enum) + num * sizeof(uint8_t *));
+      enum_chunk->id = (uint8_t *)ck_alloc(strlen(id1) + 1);
+      strcpy(enum_chunk->id, id1);
+      enum_chunk->cans_num = num;
+      for (i = 0; i < num; i++) {
+        candidate = strtok(NULL, delim);
+        enum_chunk->candidates[i] = ck_alloc(sizeof(candidate) + 1);
+        strcpy(enum_chunk->candidates[i], candidate);
+      }
+      if (enum_top) {
+        enum_top->next = enum_chunk;
+        enum_top = enum_chunk;
+      } else {
+        track->enums = enum_top = enum_chunk;
+      }
+    } else if (strcmp(type, "Length") == 0) {
+      num = atoi(strtok(NULL, delim));
+      Length *len_chunk = ck_alloc(sizeof(struct Length));
+      len_chunk->id1 = (uint8_t *)ck_alloc(strlen(id1) + 1);
+      len_chunk->id2 = (uint8_t *)ck_alloc(strlen(id2) + 1);
+      strcpy(len_chunk->id1, id1);
+      strcpy(len_chunk->id2, id2);
+      if (length_top) {
+        length_top->next = len_chunk;
+        length_top = len_chunk;
+      } else {
+        track->lengths = length_top = len_chunk;
+      }
+    } else if (strcmp(type, "Offset") == 0) {
+      Offset *offset_chunk = ck_alloc(sizeof(struct Offset));
+      num = atoi(strtok(NULL, delim));
+      offset_chunk->id1 = (uint8_t *)ck_alloc(strlen(id1) + 1);
+      strcpy(offset_chunk->id1, id1);
+      offset_chunk->id2 = (uint8_t *)ck_alloc(strlen(id2) + 1);
+      strcpy(offset_chunk->id2, id2);
+      offset_chunk->abs = num;
+      if (offset_top) {
+        offset_top->next = offset_chunk;
+        offset_top = offset_chunk;
+      } else {
+        track->offsets = offset_top = offset_chunk;
+      }
+    } else if (strcmp(type, "Constraint") == 0) {
+      Constraint *cons_chunk = ck_alloc(sizeof(struct Constraint));
+      num = atoi(strtok(NULL, delim));
+      cons_chunk->id1 = (uint8_t *)ck_alloc(strlen(id1) + 1);
+      cons_chunk->id2 = (uint8_t *)ck_alloc(strlen(id2) + 1);
+      strcpy(cons_chunk->id1, id1);
+      strcpy(cons_chunk->id2, id2);
+      cons_chunk->type = num;
+      if (cons_top) {
+        cons_top->next = cons_chunk;
+        cons_top = cons_chunk;
+      } else {
+        cons_top = track->constraints = cons_chunk;
+      }
+    }
+  }
+  fclose(fp);
+  cons_top->next = NULL;
+  offset_top->next = NULL;
+  length_top->next = NULL;
+  enum_top->next = NULL;
+  return track;
+}
+
+void free_enum(Enum *node) {
+  ck_free(node->id);
+  uint32_t i;
+  for (i = 0; i < node->cans_num; i++) {
+    ck_free(node->candidates[i]);
+  }
+  ck_free(node);
+}
+
+void free_length(Length *node) {
+  ck_free(node->id1);
+  ck_free(node->id2);
+  ck_free(node);
+}
+
+void free_offset(Offset *node) {
+  ck_free(node->id1);
+  ck_free(node->id2);
+  ck_free(node);
+}
+
+void free_constraint(Constraint *node) {
+  ck_free(node->id1);
+  ck_free(node->id2);
+  ck_free(node);
+}
+
+void free_track(Track *track) {
+  Enum *enum_next = NULL;
+  Constraint *cons_next = NULL;
+  Length *len_next = NULL;
+  Offset *offset_next = NULL;
+
+  while (track->offsets) {
+    offset_next = track->offsets->next;
+    free_offset(track->offsets);
+    track->offsets = offset_next;
+  }
+
+  while (track->enums) {
+    enum_next = track->enums->next;
+    free_enum(track->enums);
+    track->enums = enum_next;
+  }
+
+  while (track->constraints) {
+    cons_next = track->constraints->next;
+    free_constraint(track->constraints);
+    track->constraints = cons_next;
+  }
+
+  while (track->lengths) {
+    len_next = track->lengths->next;
+    free_length(track->lengths);
+    track->lengths = len_next;
+  }
+  ck_free(track);
+}
+
+struct Node *merge(struct Node *head1, struct Node *head2) {
+  struct Node *dummyHead = ck_alloc(sizeof(struct Node));
+  dummyHead->start = 0;
+  struct Node *temp = dummyHead, *temp1 = head1, *temp2 = head2;
+  while (temp1 != NULL && temp2 != NULL) {
+    if (temp1->start < temp2->start) {
+      temp->next = temp1;
+      temp1 = temp1->next;
+    } else if (temp1->start == temp2->start) {
+      if (temp1->end < temp2->end) {
+        temp->next = temp1;
+        temp1 = temp1->next;
+      } else {
+        temp->next = temp2;
+        temp2 = temp2->next;
+      }
+    } else {
+      temp->next = temp2;
+      temp2 = temp2->next;
+    }
+    temp = temp->next;
+  }
+  if (temp1 != NULL) {
+    temp->next = temp1;
+  } else if (temp2 != NULL) {
+    temp->next = temp2;
+  }
+  temp = dummyHead->next;
+  ck_free(dummyHead);
+  return temp;
+}
+
+struct Node *toSortList(struct Node *head, struct Node *tail) {
+  if (head == NULL) {
+    return head;
+  }
+  if (head->next == tail) {
+    head->next = NULL;
+    return head;
+  }
+  struct Node *slow = head, *fast = head;
+  while (fast != tail) {
+    slow = slow->next;
+    fast = fast->next;
+    if (fast != tail) {
+      fast = fast->next;
+    }
+  }
+  struct Node *mid = slow;
+  return merge(toSortList(head, mid), toSortList(mid, tail));
+}
+
+Node *sortList(Node *list) { return toSortList(list, NULL); }
+
+cJSON *parse_json(const u8 *format_file) {
+  cJSON *cjson_head;
   s32 fd;
-  u8* in_buf;
+  u8 *in_buf;
   struct stat st;
   s32 n;
   if (lstat(format_file, &st)) {
@@ -373,88 +610,836 @@ cJSON* parse_json(const u8* format_file) {
   return cjson_head;
 }
 
+Chunk *find_chunk(uint8_t *id, Chunk *head) {
+  Chunk *iter, *result;
+  iter = head;
+  while (iter) {
+    if (strcmp(id, iter->id) == 0) {
+      return iter;
+    }
+    if (iter->son) {
+      result = find_chunk(id, iter->son);
+      if (result) {
+        return result;
+      }
+    }
+    iter = iter->next;
+  }
+  return NULL;
+}
 
-void delete_block(cJSON* cjson_head, uint32_t delete_from,
-                         uint32_t delete_len) {
-  cJSON* cjson_iter;
-  cJSON* cjson_start;
-  cJSON* cjson_end;
-  cJSON* cjson_temp;
-  cjson_iter = cjson_head->child;
-  cjson_start = cjson_iter;
-  while (cjson_iter != NULL && CHUNK_START(cjson_iter) < delete_from) {
-    cjson_start = cjson_iter;
-    cjson_iter = cjson_iter->next;
+void chunk_add_len(Chunk *head, int32_t len) {
+  Chunk *iter = head;
+  while (iter) {
+    iter->start += len;
+    iter->end += len;
+    iter = iter->next;
   }
-  cjson_end = cjson_start;
-  while (cjson_iter != NULL &&
-         CHUNK_START(cjson_iter) < delete_from + delete_len) {
-    cjson_end = cjson_iter;
-    cjson_iter = cjson_iter->next;
+}
+
+Chunk *chunk_duplicate(Chunk *head, Boolean recurse) {
+  Chunk *dup_head, *top, *iter, *temp;
+  dup_head = top = temp = NULL;
+  iter = head;
+  while (iter) {
+    Chunk *node = ck_alloc(sizeof(Chunk));
+    node->start = iter->start;
+    node->end = iter->end;
+    node->id = (uint8_t *)ck_alloc(strlen(iter->id) + 1);
+    strcpy(node->id, iter->id);
+    node->son = NULL;
+    node->next = NULL;
+    node->prev = NULL;
+    node->father = NULL;
+    if (top) {
+      top->next = node;
+      node->prev = top;
+      top = node;
+    } else {
+      dup_head = top = node;
+    }
+    if (iter->son) {
+      top->son = chunk_duplicate(iter->son, True);
+      temp = top->son;
+      while (temp) {
+        temp->father = top;
+        temp = temp->next;
+      }
+    }
+    if (recurse) {
+      iter = iter->next;
+    } else {
+      iter = NULL;
+    }
   }
-  if (cJSON_Compare(cjson_start, cjson_end, 1)) {
-    cJSON_SetIntValue(cjson_start->child->next,
-                      CHUNK_END(cjson_start) - delete_len);
-    cjson_iter = cjson_start->next;
-    while (cjson_iter) {
-      cJSON_SetIntValue(cjson_iter->child,
-                        CHUNK_START(cjson_iter) - delete_len);
-      cJSON_SetIntValue(cjson_iter->child->next,
-                        CHUNK_END(cjson_iter) - delete_len);
-      cjson_iter = cjson_iter->next;
+  return dup_head;
+}
+
+void chunk_detach(Chunk *head, Chunk *item) {
+  Chunk *father;
+  father = item->father;
+  uint32_t delete_len = item->end - item->start;
+  while (father) {
+    father->end -= delete_len;
+    if (father->next) {
+      chunk_add_len(father->next, -delete_len);
+    }
+    father = father->father;
+  }
+  if (item->next) {
+    chunk_add_len(item->next, -delete_len);
+  }
+  if (item->prev) {
+    if (item->next) {
+      item->prev->next = item->next;
+      item->next->prev = item->prev;
+    } else {
+      item->prev->next = NULL;
+    }
+  } else if (item->father) {
+    if (item->next) {
+      item->father->son = item->next;
+      item->next->prev = NULL;
+    } else {
+      item->father->son = NULL;
+    }
+  }
+}
+
+void chunk_insert(Chunk *item, Chunk *insert) {
+  uint32_t len;
+  len = insert->end - insert->start;
+  chunk_add_len(insert, item->end - insert->start);
+  Chunk *father = item->father;
+  while (father) {
+    father->end += len;
+    if (father->next) {
+      chunk_add_len(father->next, len);
+    }
+    father = father->father;
+  }
+  if (item->next) {
+    chunk_add_len(item->next, len);
+  }
+  if (item->next) {
+    item->next->prev = insert;
+    insert->next = item->next;
+  } else {
+    insert->next = NULL;
+  }
+  item->next = insert;
+  insert->prev = item;
+
+  insert->father = item->father;
+}
+
+uint8_t *copy_and_insert(uint8_t *buf, uint32_t *len, uint32_t insert_at,
+                         uint32_t copy_start, uint32_t copy_len) {
+  uint8_t *new_buf;
+  new_buf = ck_alloc(*len + copy_len);
+
+  memcpy(new_buf, buf, insert_at);
+  memcpy(new_buf + insert_at, buf + copy_start, copy_len);
+  memcpy(new_buf + insert_at + copy_len, buf + insert_at, *len - insert_at);
+
+  *len += copy_len;
+  ck_free(buf);
+  return new_buf;
+}
+
+void set_id_add_map(Chunk *head, HashMap map) {
+  Chunk *iter = head;
+  while (iter) {
+    while (map->exists(map, iter->id)) {
+      generate_id(iter->id);
+    }
+    map->put(map, iter->id, iter);
+    if (iter->son) {
+      set_id_add_map(iter->son, map);
+    }
+    iter = iter->next;
+  }
+}
+
+void delete_from_map(Chunk *head, HashMap map) {
+  Chunk *iter = head;
+  while (iter) {
+    map->remove(map, iter->id);
+    if (iter->son) {
+      delete_from_map(iter->son, map);
+    }
+    iter = iter->next;
+  }
+}
+
+uint8_t *insert_chunk(uint8_t *buf, uint32_t *len, HashMap map, Chunk *head,
+                      uint8_t *chunk_id, uint8_t *insert_id, Boolean after) {
+  uint32_t clone_len;
+  uint8_t *new_buf;
+  Chunk *chunk_choose = find_chunk(chunk_id, head);
+  Chunk *item = find_chunk(insert_id, head);
+  Chunk *temp;
+  temp = NULL;
+  if (item == NULL || chunk_choose == NULL) {
+    return buf;
+  }
+  clone_len = chunk_choose->end - chunk_choose->start;
+  if (clone_len == 0) {
+    return buf;
+  }
+  Chunk *chunk_dup = chunk_duplicate(chunk_choose, False);
+  if (!after) {
+    if (item->prev) {
+      item = item->prev;
+    } else {
+      temp = ck_alloc(sizeof(Chunk));
+      temp->start = item->start;
+      temp->end = item->start;
+      temp->prev = NULL;
+      temp->father = item->father;
+      temp->next = item;
+      item->prev = temp;
+      temp->son = NULL;
+      if (temp->father) {
+        temp->father->son = temp;
+      }
+      item = temp;
+    }
+  }
+  new_buf = copy_and_insert(buf, len, get_chunk_abs_end(item),
+                            get_chunk_abs_start(chunk_choose), clone_len);
+  set_id_add_map(chunk_dup, map);
+  chunk_insert(item, chunk_dup);
+  if (temp != NULL) {
+    if (temp->father) {
+      temp->father->son = temp->next;
+      temp->next->prev = NULL;
+      ck_free(temp);
+    }
+  }
+  return new_buf;
+}
+
+uint8_t *delete_data(uint8_t *buf, uint32_t *len, uint32_t delete_start,
+                     uint32_t delete_len) {
+  uint8_t *new_buf;
+  new_buf = ck_alloc(*len - delete_len);
+  memcpy(new_buf, buf, delete_start);
+  memcpy(new_buf + delete_start, buf + delete_start + delete_len,
+         *len - delete_start - delete_len);
+  *len -= delete_len;
+  ck_free(buf);
+  return new_buf;
+}
+
+uint8_t *delete_chunk(uint8_t *buf, uint32_t *len, HashMap map, Chunk *head,
+                      uint8_t *id) {
+  Chunk *chunk_delete = find_chunk(id, head);
+  if (chunk_delete == NULL) {
+    return buf;
+  }
+  uint32_t delete_start = get_chunk_abs_start(chunk_delete);
+  uint32_t delete_len = chunk_delete->end - chunk_delete->start;
+  if (delete_start + delete_len >= *len) {
+    return buf;
+  }
+  chunk_detach(head, chunk_delete);
+  delete_from_map(chunk_delete, map);
+  free_tree(chunk_delete, False);
+  return delete_data(buf, len, delete_start, delete_len);
+}
+
+Chunk *swap_chunks(Chunk *head, Chunk *left, Chunk *right) {
+  Chunk *temp;
+  if (right->next == NULL) {
+    if (left->next == right) {
+      right->next = left;
+      right->prev = left->prev;
+      left->next = NULL;
+      if (left->prev != NULL) {
+        left->prev->next = right;
+      }
+      left->prev = right;
+    } else {
+      right->next = left->next;
+      right->prev->next = left;
+      temp = right->prev;
+      right->prev = left->prev;
+      left->next->prev = right;
+      left->next = NULL;
+      if (left->prev != NULL) {
+        left->prev->next = right;
+      }
+      left->prev = temp;
     }
   } else {
-    cjson_iter = cjson_start->next;
-    while (!cJSON_Compare(cjson_iter, cjson_end, 1)) {
-      cjson_temp = cjson_iter->next;
-      cJSON_DetachItemViaPointer(cjson_head, cjson_iter);
-      cJSON_Delete(cjson_iter);
-      cjson_iter = cjson_temp;
-    }
-    cJSON_SetIntValue(cjson_start->child->next,
-                      CHUNK_END(cjson_end) - delete_len);
-    cJSON_DetachItemViaPointer(cjson_head, cjson_end);
-    cJSON_Delete(cjson_end);
-    cjson_iter = cjson_start->next;
-    while (cjson_iter) {
-      cJSON_SetIntValue(cjson_iter->child,
-                        CHUNK_START(cjson_iter) - delete_len);
-      cJSON_SetIntValue(cjson_iter->child->next,
-                        CHUNK_END(cjson_iter) - delete_len);
-      cjson_iter = cjson_iter->next;
+    if (left->next == right) {
+      right->next->prev = left;
+      temp = right->next;
+      right->next = left;
+      right->prev = left->prev;
+      left->next = temp;
+      if (left->prev != NULL) {
+        left->prev->next = right;
+      }
+      left->prev = right;
+    } else {
+      right->next->prev = left;
+      temp = right->next;
+      right->next = left->next;
+      left->next->prev = right;
+      left->next = temp;
+      right->prev->next = left;
+      temp = right->prev;
+      right->prev = left->prev;
+      if (left->prev != NULL) {
+        left->prev->next = right;
+      }
+      left->prev = temp;
     }
   }
-  if (CHUNK_START(cjson_start) == CHUNK_END(cjson_start)) {
-    cJSON_DetachItemViaPointer(cjson_head, cjson_start);
-    cJSON_Delete(cjson_start);
+  if (right->prev == NULL) {
+    head = right;
+  }
+  return head;
+}
+
+uint32_t random_num(uint32_t rand_max) {
+  struct timeval tv;
+  unsigned int seed_num;
+
+  gettimeofday(&tv, NULL);
+  seed_num = (unsigned int)(tv.tv_sec + tv.tv_usec);
+  srand(seed_num);
+  return rand() % rand_max;
+}
+
+Chunk *random_chunk(Chunk *head) {
+  Chunk *reserve, *iter;
+  reserve = NULL;
+  uint32_t count, rand;
+  iter = head;
+  count = 0;
+  while (iter) {
+    count += 1;
+    rand = random_num(count) + 1;
+    if (rand == count) {
+      reserve = iter;
+    }
+    iter = iter->next;
+  }
+  return reserve;
+}
+
+uint8_t *exchange_chunk(uint8_t *buf, uint32_t len, Chunk *head, uint8_t *id1) {
+  Chunk *chunk_left, *chunk_right, *temp;
+  uint32_t left_start, left_end, left_len, right_start, right_end, right_len;
+  uint32_t gap;
+  uint8_t *new_buf;
+  chunk_left = find_chunk(id1, head);
+  if (chunk_left == NULL) {
+    return buf;
+  }
+  chunk_left = random_chunk(chunk_left->father->son);
+  chunk_right = random_chunk(chunk_left->father->son);
+  if (strcmp(chunk_left->id, chunk_right->id) == 0) {
+    return buf;
+  }
+  if (get_chunk_abs_start(chunk_left) > get_chunk_abs_start(chunk_right)) {
+    temp = chunk_left;
+    chunk_left = chunk_right;
+    chunk_right = temp;
+  }
+  left_start = get_chunk_abs_start(chunk_left);
+  left_end = get_chunk_abs_end(chunk_left);
+  right_start = get_chunk_abs_start(chunk_right);
+  right_end = get_chunk_abs_end(chunk_right);
+  new_buf = ck_alloc(len);
+  memcpy(new_buf, buf, left_start);
+  memcpy(new_buf + left_start, buf + right_start, right_end - right_start);
+  memcpy(new_buf + left_start + right_end - right_start, buf + left_end,
+         right_start - left_end);
+  memcpy(new_buf + left_start + right_end - left_end, buf + left_start,
+         left_end - left_start);
+  memcpy(new_buf + right_end, buf + right_end, len - right_end);
+  ck_free(buf);
+
+  left_len = chunk_left->end - chunk_left->start;
+  right_len = chunk_right->end - chunk_right->start;
+  gap = right_len - left_len;
+
+  chunk_left->end = chunk_right->end;
+  chunk_right->end = chunk_left->start + right_len;
+  chunk_right->start = chunk_left->start;
+  chunk_left->start = chunk_left->end - left_len;
+
+  temp = chunk_left->next;
+  while (strcmp(temp->id, chunk_right->id) != 0) {
+    temp->start += gap;
+    temp->end += gap;
+    temp = temp->next;
+  }
+  chunk_left->father->son =
+      swap_chunks(chunk_left->father->son, chunk_left, chunk_right);
+  return new_buf;
+}
+
+void number_add(uint8_t *buf, Chunk *chunk, int32_t num) {
+  uint32_t chunk_start, chunk_len;
+  chunk_start = get_chunk_abs_start(chunk);
+  chunk_len = chunk->end - chunk->start;
+  if (chunk_len == 1) {
+    *(uint8_t *)(buf + chunk_start) += num;
+  } else if (chunk_len == 2) {
+    *(uint16_t *)(buf + chunk_start) += num;
+  } else if (chunk_len == 4) {
+    *(uint32_t *)(buf + chunk_start) += num;
   }
 }
 
-static void insert_block(cJSON* cjson_head, u32 insert_to, u32 insert_len) {
-  cJSON* json_iter;
-  json_iter = cjson_head->child;
-  while (json_iter->next != NULL && CHUNK_START(json_iter->next) < insert_to) {
-    json_iter = json_iter->next;
+Chunk *find_chunk_include(Chunk *head, uint32_t num) {
+  Chunk *iter;
+  iter = head;
+  while (iter) {
+    if (iter->end <= num) {
+      iter = iter->next;
+    } else if (iter->start > num) {
+      return NULL;
+    } else if (iter->son) {
+      return find_chunk_include(iter->son, num);
+    } else {
+      return iter;
+    }
   }
-  cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) + insert_len);
-  json_iter = json_iter->next;
-  while (json_iter) {
-    cJSON_SetIntValue(json_iter->child, CHUNK_START(json_iter) + insert_len);
-    cJSON_SetIntValue(json_iter->child->next,
-                      CHUNK_END(json_iter) + insert_len);
-    json_iter = json_iter->next;
+  return NULL;
+}
+
+void insert_block(Chunk *head, uint32_t insert_to, uint32_t insert_len) {
+  Chunk *item = find_chunk_include(head, insert_to);
+  if (item == NULL) {
+    return;
+  }
+  Chunk *father = item->father;
+  while (father) {
+    father->end += insert_len;
+    if (father->next) {
+      chunk_add_len(father->next, insert_len);
+    }
+    father = father->father;
+  }
+  if (item->next) {
+    chunk_add_len(item->next, insert_len);
   }
 }
 
+Chunk *splice_tree(Chunk *head1, Chunk *head2, uint32_t split_at) {
+  Chunk *item1 = find_chunk_include(head1, split_at);
+  Chunk *item2 = find_chunk_include(head2, split_at);
+  Chunk *item1_root = item1;
+  Chunk *item2_root = item2;
+  Chunk *prev, *iter, *root;
+  while (item1_root->father) {
+    free_tree(item1_root->next, True);
+    item1_root->next = NULL;
+    item1_root->end =
+        split_at - get_chunk_abs_start(item1_root) + item1_root->start;
+    item1_root = item1_root->father;
+  }
+  item1_root->end =
+      split_at - get_chunk_abs_start(item1_root) + item1_root->start;
+
+  while (item2_root->father) {
+    prev = item2_root->prev;
+    while (prev) {
+      iter = prev->prev;
+      free_tree(prev, False);
+      prev = iter;
+    }
+    item2_root->father->son = item2_root;
+    item2_root->prev = NULL;
+    item2_root->end = get_chunk_abs_end(item2_root) - split_at;
+    item2_root->start = 0;
+    chunk_add_len(item2_root->next, get_chunk_abs_start(item2_root) - split_at);
+    item2_root = item2_root->father;
+  }
+  item2_root->end = item2_root->end - split_at;
+  item2_root->start = 0;
+  chunk_add_len(item2_root, item1_root->end);
+  HashMap map = createHashMap(NULL, NULL);
+  tree_add_map(item1_root, map);
+  root = ck_alloc(sizeof(Chunk));
+  item1_root->next = item2_root;
+  item2_root->prev = item1_root;
+  root->son = item1_root;
+  root->father = root->next = NULL;
+  root->start = 0;
+  root->end = item2_root->end;
+  root->id = NULL;
+  set_id_add_map(item2_root, map);
+  map->clear(map);
+  free(map);
+  return root;
+}
+
+void struct_havoc_stage(char **argv, uint8_t *buf, uint32_t len, Chunk *tree) {
+  uint8_t **all_chunks;
+  uint32_t chunk_num = 0, out_len;
+  uint32_t i, index1, index2;
+  uint8_t *out_buf;
+  Chunk *out_tree;
+  out_len = len;
+  out_buf = ck_alloc(len);
+  memcpy(out_buf, buf, len);
+  out_tree = chunk_duplicate(tree, True);
+  HashMap map = createHashMap(NULL, NULL);
+  tree_add_map(tree->son, map);
+  all_chunks = ck_alloc(map->size * sizeof(uint8_t *));
+  HashMapIterator map_iter = createHashMapIterator(map);
+  while (hasNextHashMapIterator(map_iter)) {
+    map_iter = nextHashMapIterator(map_iter);
+    all_chunks[chunk_num] = map_iter->entry->key;
+    chunk_num++;
+  }
+  map->clear(map);
+  free(map);
+  map = createHashMap(NULL, NULL);
+  tree_add_map(out_tree->son, map);
+  stage_max = chunk_num * chunk_num;
+  stage_cur = 0;
+  stage_name = "struct_havoc";
+  stage_short = "chunkFuzzer1";
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+    for (i = 0; i < 3; i++) {
+      uint32_t num = random_num(3);
+      switch (num) {
+        case 0: {
+          index1 = random_num(chunk_num);
+          index2 = random_num(chunk_num);
+          out_buf =
+              insert_chunk(out_buf, &out_len, map, out_tree, all_chunks[index1],
+                           all_chunks[index2], random_num(2));
+          break;
+        };
+        case 1: {
+          index1 = random_num(chunk_num);
+          out_buf = delete_chunk(out_buf, &out_len, map, out_tree,
+                                 all_chunks[index1]);
+          break;
+        };
+        case 2: {
+          index1 = random_num(chunk_num);
+          out_buf =
+              exchange_chunk(out_buf, out_len, out_tree, all_chunks[index1]);
+          break;
+        }
+      }
+    }
+
+    if (common_fuzz_stuff(argv, out_buf, out_len, out_tree))
+      goto exit_struct_havoc_stage;
+
+    if (out_len < len) {
+      out_buf = ck_realloc(out_buf, len);
+    }
+    out_len = len;
+    memcpy(out_buf, buf, len);
+    free_tree(out_tree, True);
+    out_tree = chunk_duplicate(tree, True);
+    map->clear(map);
+    free(map);
+    map = createHashMap(NULL, NULL);
+    tree_add_map(out_tree->son, map);
+  }
+
+exit_struct_havoc_stage:
+
+  freeHashMapIterator(&map_iter);
+  free_tree(out_tree, True);
+  map->clear(map);
+  free(map);
+  ck_free(all_chunks);
+  ck_free(out_buf);
+}
+
+void struct_describing_stage(uint8_t *buf, uint32_t len, cJSON *json) {}
+
+void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
+                            Track *track) {
+  uint32_t out_len;
+  // uint32_t stage_max, stage_cur, index1, index2;
+  int32_t i;
+  uint8_t *out_buf;
+  Chunk *tree, *out_tree;
+  Enum *enum_iter;
+  Length *length_iter;
+  Offset *offset_iter;
+  Constraint *cons_iter;
+  tree = get_tree(json);
+  HashMap map = createHashMap(NULL, NULL);
+  out_len = len;
+  out_buf = ck_alloc(len);
+  memcpy(out_buf, buf, len);
+  out_tree = chunk_duplicate(tree, True);
+  tree_add_map(out_tree->son, map);
+  /*mutation enum*/
+  enum_iter = track->enums;
+  while (enum_iter) {
+    uint32_t last_len = 0, stage_cur_byte;
+    Chunk *cur_chunk;
+    for (i = 0; i < enum_iter->cans_num; i++) {
+      last_len = strlen(enum_iter->candidates[i]);
+      cur_chunk = map->get(map, enum_iter->id);
+      if (cur_chunk == NULL) {
+        continue;
+      }
+      stage_cur_byte = get_chunk_abs_start(cur_chunk);
+      if (stage_cur_byte < 0 || (stage_cur_byte + last_len) > len) {
+        continue;
+      }
+      if ((cur_chunk->end - cur_chunk->start) < last_len) {
+        continue;
+      }
+      /* new testcase */
+      memcpy(out_buf + stage_cur_byte, enum_iter->candidates[i], last_len);
+
+      /*save testcase if interesting */
+
+      /* Restore all the clobbered memory */
+      memcpy(out_buf + stage_cur_byte, buf, last_len);
+    }
+    enum_iter = enum_iter->next;
+  }
+
+  /*mutation length*/
+  length_iter = track->lengths;
+  while (length_iter) {
+    Chunk *meta_chunk, *payload_chunk, *father;
+    uint32_t meta_len, payload_len;
+    uint32_t start;
+    meta_len = payload_len = 0;
+    /* add to length field */
+    for (i = 1; i < 36; i++) {
+      if (i > out_len) {
+        break;
+      }
+      meta_chunk = map->get(map, length_iter->id1);
+      payload_chunk = map->get(map, length_iter->id2);
+      if (meta_chunk == NULL || payload_chunk == NULL) {
+        continue;
+      }
+      meta_len = meta_chunk->end - meta_chunk->start;
+      payload_len = payload_chunk->end - payload_chunk->start;
+      if (meta_len != 1 && meta_len != 2 && meta_len != 4) {
+        continue;
+      }
+      number_add(out_buf, meta_chunk, i);
+      start = random_num(out_len - i);
+      /* new testcase */
+      out_buf = copy_and_insert(out_buf, &out_len,
+                                get_chunk_abs_end(payload_chunk), start, i);
+      /* update tree structure */
+      payload_chunk->end += i;
+      father = payload_chunk->father;
+      while (father) {
+        father->end += i;
+        if (father->next) {
+          chunk_add_len(father->next, i);
+        }
+        father = father->father;
+      }
+      if (payload_chunk->next) {
+        chunk_add_len(payload_chunk->next, i);
+      }
+
+      /* save testcase if interesting */
+
+      /* Recover all the clobbered stucture */
+      if (out_len < len) {
+        out_buf = ck_realloc(out_buf, len);
+      }
+      out_len = len;
+      memcpy(out_buf, buf, len);
+      free_tree(out_tree, True);
+      out_tree = chunk_duplicate(tree, True);
+      map->clear(map);
+      free(map);
+      map = createHashMap(NULL, NULL);
+      tree_add_map(out_tree->son, map);
+    }
+
+    /* delete from length field */
+    for (i = 0; i < payload_len; i++) {
+      meta_chunk = map->get(map, length_iter->id1);
+      payload_chunk = map->get(map, length_iter->id2);
+      if (meta_chunk == NULL || payload_chunk == NULL) {
+        continue;
+      }
+      meta_len = meta_chunk->end - meta_chunk->start;
+      payload_len = payload_chunk->end - payload_chunk->start;
+      if (meta_len != 1 && meta_len != 2 && meta_len != 4) {
+        continue;
+      }
+      number_add(out_buf, meta_chunk, -i);
+      /* new testcase */
+      out_buf =
+          delete_data(out_buf, &out_len, get_chunk_abs_start(payload_chunk), i);
+      /* update tree structure */
+      payload_chunk->end -= i;
+      father = payload_chunk->father;
+      while (father) {
+        father->end -= i;
+        if (father->next) {
+          chunk_add_len(father->next, -i);
+        }
+        father = father->father;
+      }
+      if (payload_chunk->next) {
+        chunk_add_len(payload_chunk->next, -i);
+      }
+
+      /* save testcase if interesting */
+
+      /* Recover all the clobbered stucture */
+      if (out_len < len) {
+        out_buf = ck_realloc(out_buf, len);
+      }
+      out_len = len;
+      memcpy(out_buf, buf, len);
+      free_tree(out_tree, True);
+      out_tree = chunk_duplicate(tree, True);
+      map->clear(map);
+      free(map);
+      map = createHashMap(NULL, NULL);
+      tree_add_map(out_tree->son, map);
+    }
+    length_iter = length_iter->next;
+  }
+
+  /*mutation offset*/
+  offset_iter = track->offsets;
+  while (offset_iter) {
+    Chunk *meta_chunk;
+    uint32_t meta_length;
+    /* add offset field */
+    for (i = 1; i < 36; i++) {
+      if (i > out_len) {
+        break;
+      }
+      meta_chunk = map->get(map, offset_iter->id1);
+      if (meta_chunk == NULL) {
+        continue;
+      }
+      meta_length = meta_chunk->end - meta_chunk->start;
+      if (meta_length != 1 && meta_length != 2 && meta_length != 4) {
+        continue;
+      }
+      number_add(out_buf, meta_chunk, i);
+      Chunk *block = ck_alloc(sizeof(Chunk));
+      block->start = 0;
+      block->end = i;
+      block->id = ck_alloc(strlen(meta_chunk->id) + 1);
+      block->next = block->prev = block->father = block->son = NULL;
+      strcpy(block->id, meta_chunk->id);
+      set_id_add_map(block, map);
+      chunk_insert(meta_chunk, block);
+
+      /* new testcase */
+      out_buf = copy_and_insert(out_buf, &out_len, meta_chunk->end,
+                                random_num(out_len - i), i);
+
+      /* save testcase if interesting */
+
+      /* Recover all the clobbered stucture */
+      if (out_len < len) {
+        out_buf = ck_realloc(out_buf, len);
+      }
+      out_len = len;
+      memcpy(out_buf, buf, len);
+      free_tree(out_tree, True);
+      out_tree = chunk_duplicate(tree, True);
+      map->clear(map);
+      ck_free(map);
+      map = createHashMap(NULL, NULL);
+      tree_add_map(out_tree->son, map);
+    }
+    offset_iter = offset_iter->next;
+  }
+
+  /*mutation constraint*/
+  cons_iter = track->constraints;
+  while (cons_iter) {
+    cons_iter = cons_iter->next;
+  }
+  free_tree(tree, True);
+  free_tree(out_tree, True);
+  map->clear(map);
+  free(map);
+  ck_free(out_buf);
+}
+
+// void delete_block(cJSON* cjson_head, u32 delete_from, u32 delete_len) {
+//   cJSON* cjson_iter;
+//   cJSON* cjson_start;
+//   cJSON* cjson_end;
+//   cJSON* cjson_temp;
+//   cjson_iter = cjson_head->child;
+//   cjson_start = cjson_iter;
+//   while (cjson_iter != NULL && get_json_start(cjson_iter) < delete_from) {
+//     cjson_start = cjson_iter;
+//     cjson_iter = cjson_iter->next;
+//   }
+//   cjson_end = cjson_start;
+//   while (cjson_iter != NULL &&
+//          get_json_start(cjson_iter) < delete_from + delete_len) {
+//     cjson_end = cjson_iter;
+//     cjson_iter = cjson_iter->next;
+//   }
+//   if (cJSON_Compare(cjson_start, cjson_end, 1)) {
+//     cJSON_SetIntValue(cjson_start->child->next,
+//                       get_json_end(cjson_start) - delete_len);
+//     cjson_iter = cjson_start->next;
+//     while (cjson_iter) {
+//       cJSON_SetIntValue(cjson_iter->child,
+//                         get_json_start(cjson_iter) - delete_len);
+//       cJSON_SetIntValue(cjson_iter->child->next,
+//                         get_json_end(cjson_iter) - delete_len);
+//       cjson_iter = cjson_iter->next;
+//     }
+//   } else {
+//     cjson_iter = cjson_start->next;
+//     while (!cJSON_Compare(cjson_iter, cjson_end, 1)) {
+//       cjson_temp = cjson_iter->next;
+//       cJSON_DetachItemViaPointer(cjson_head, cjson_iter);
+//       cJSON_Delete(cjson_iter);
+//       cjson_iter = cjson_temp;
+//     }
+//     cJSON_SetIntValue(cjson_start->child->next,
+//                       get_json_end(cjson_end) - delete_len);
+//     cJSON_DetachItemViaPointer(cjson_head, cjson_end);
+//     cJSON_Delete(cjson_end);
+//     cjson_iter = cjson_start->next;
+//     while (cjson_iter) {
+//       cJSON_SetIntValue(cjson_iter->child,
+//                         get_json_start(cjson_iter) - delete_len);
+//       cJSON_SetIntValue(cjson_iter->child->next,
+//                         get_json_end(cjson_iter) - delete_len);
+//       cjson_iter = cjson_iter->next;
+//     }
+//   }
+//   if (get_json_start(cjson_start) == get_json_end(cjson_start)) {
+//     cJSON_DetachItemViaPointer(cjson_head, cjson_start);
+//     cJSON_Delete(cjson_start);
+//   }
+// }
 
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
    skipped or bailed out. */
 
-u8 fuzz_one(char** argv) {
+u8 fuzz_one(char **argv) {
   s32 len, fd, temp_len, i, j;
   u8 *in_buf, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
-  cJSON *in_json, *out_json, *json_iter;
+  cJSON *in_json, *out_json;
   u64 havoc_queued, orig_hit_cnt, new_hit_cnt;
   u32 splice_cycle = 0, perf_score = 100, orig_perf, prev_cksum, eff_cnt = 1;
 
@@ -462,6 +1447,13 @@ u8 fuzz_one(char** argv) {
 
   u8 a_collect[MAX_AUTO_EXTRA];
   u32 a_len = 0;
+
+  Node *list, *list_itr, *list_temp;
+  list = list_itr = list_temp = NULL;
+
+  Chunk *in_tree, *out_tree;
+
+  u32 start = 0, end = 0, field_len = 0;
 
 #ifdef IGNORE_FINDS
 
@@ -559,9 +1551,9 @@ u8 fuzz_one(char** argv) {
    ************/
 
   if (!dumb_mode && !queue_cur->trim_done) {
-    u8 res = trim_case(argv, queue_cur, in_buf, in_json);
+    // u8 res = trim_case(argv, queue_cur, in_buf, in_json);
 
-    if (res == FAULT_ERROR) FATAL("Unable to execute target application");
+    // if (res == FAULT_ERROR) FATAL("Unable to execute target application");
 
     if (stop_soon) {
       cur_skipped_paths++;
@@ -578,12 +1570,16 @@ u8 fuzz_one(char** argv) {
   memcpy(out_buf, in_buf, len);
   cJSON_Delete(out_json);
   out_json = cJSON_Duplicate(in_json, 1);
+  in_tree = json_to_tree(in_json);
+  out_tree = json_to_tree(in_json);
 
   /*********************
    * PERFORMANCE SCORE *
    *********************/
 
   orig_perf = perf_score = calculate_score(queue_cur);
+
+  struct_havoc_stage(argv, in_buf, len, in_tree);
 
   /* Skip right away if -d is given, if we have done deterministic fuzzing on
      this entry ourselves (was_fuzzed), or if it has gone through deterministic
@@ -600,240 +1596,32 @@ u8 fuzz_one(char** argv) {
 
   doing_det = 1;
 
-  /*********************************************
-   * CHUNK BASED MUTATION                      *
-   * ******************************************/
-  // stage_name = "chunk_insert";
-  // stage_short = "chunk_in";
-  // stage_max = cJSON_GetArraySize(in_json);
-  // for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
-  // {
-  //   /* insert chunk */
-  //   for (i = 0; i <= stage_max; i++)
-  //   {
-  //     temp_len = len;
-  //     out_buf = insert_chunk(out_buf, &temp_len, out_json, stage_cur, i);
-  //     if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
-  //       goto abandon_entry;
-  //     memcpy(out_buf, in_buf, len);
-  //     cJSON_Delete(out_json);
-  //     out_json = cJSON_Duplicate(in_json, 1);
-  //   }
-  // }
-
-  // if(stage_max > 1) {
-  //   stage_name = "chunk_delete";
-  //   stage_short = "chunk_de";
-  //   for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
-  //   {
-  //     /* delete chunk */
-  //     temp_len = len;
-  //     out_buf = delete_chunk(out_buf, &temp_len, out_json, stage_cur);
-  //     if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
-  //       goto abandon_entry;
-  //     ck_free(out_buf);
-  //     out_buf = ck_alloc_nozero(len);
-  //     memcpy(out_buf, in_buf, len);
-  //     cJSON_Delete(out_json);
-  //     out_json = cJSON_Duplicate(in_json, 1);
-  //   }
-  // }
-
-  // stage_name = "chunk_exchange";
-  // stage_short = "chunk_ex";
-  // for (stage_cur = 0; stage_cur < stage_max; stage_cur++)
-  // {
-  //   /*exchange chunk*/
-  //   for (i = stage_cur + 1; i < stage_max; i++)
-  //   {
-  //     out_buf = exchange_chunk(out_buf, len, out_json, stage_cur, i);
-  //     if (common_fuzz_stuff(argv, out_buf, len, out_json))
-  //       goto abandon_entry;
-  //     memcpy(out_buf, in_buf, len);
-  //     cJSON_Delete(out_json);
-  //     out_json = cJSON_Duplicate(in_json, 1);
-  //   }
-  // }
-
-  // chunk_num = cJSON_GetArraySize(out_json);
-  // for (i = 0; i < chunk_num * chunk_num; i++) {
-  //   for (j = chunk_num - 1; j > 0; j--){
-  //     u32 rand = UR(j + 1);
-  //     out_buf = exchange_chunk(out_buf, len, out_json, j, rand);
-  //   }
-  //   if (common_fuzz_stuff(argv, out_buf, len, out_json))
-  //     goto abandon_entry;
-  //   memcpy(out_buf, in_buf, len);
-  //   cJSON_Delete(out_json);
-  //   out_json = cJSON_Duplicate(in_json, 1);
-  // }
-
-  /*********************************************
-   * INTERNAL CHUNK MUTATION                      *
-   * ******************************************/
-  // stage_name = "internal_chunk";
-  // stage_short = "inter_chunk";
-  // for(stage_cur = 0; stage_cur < stage_max; stage_cur++) {
-  //   for(i = 0; i < extras_cnt; i++) {
-  //     replace_chunk_id(out_buf, out_json, stage_cur, extras[i].data,
-  //     extras[i].len); if (common_fuzz_stuff(argv, out_buf, len, out_json))
-  //       goto abandon_entry;
-  //     memcpy(out_buf, in_buf, len);
-  //     cJSON_Delete(out_json);
-  //     out_json = cJSON_Duplicate(in_json, 1);
-  //   }
-  // }
-  /*********************************************
-   * SIMPLE BITFLIP (+dictionary construction) *
-   *********************************************/
-
-#define FLIP_BIT(_ar, _b)                   \
-  do {                                      \
-    u8* _arf = (u8*)(_ar);                  \
-    u32 _bf = (_b);                         \
-    _arf[(_bf) >> 3] ^= (128 >> ((_bf)&7)); \
-  } while (0)
-
-  /* Single walking bit. */
-
-  stage_short = "flip1";
-  stage_max = len << 3;
-  stage_name = "bitflip 1/1";
-
-  stage_val_type = STAGE_VAL_NONE;
-
-  orig_hit_cnt = queued_paths + unique_crashes;
-
-  prev_cksum = queue_cur->exec_cksum;
-
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
-    stage_cur_byte = stage_cur >> 3;
-
-    FLIP_BIT(out_buf, stage_cur);
-
-    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-
-    FLIP_BIT(out_buf, stage_cur);
-
-    /* While flipping the least significant bit in every byte, pull of an extra
-       trick to detect possible syntax tokens. In essence, the idea is that if
-       you have a binary blob like this:
-
-       xxxxxxxxIHDRxxxxxxxx
-
-       ...and changing the leading and trailing bytes causes variable or no
-       changes in program flow, but touching any character in the "IHDR" string
-       always produces the same, distinctive path, it's highly likely that
-       "IHDR" is an atomically-checked magic value of special significance to
-       the fuzzed format.
-
-       We do this here, rather than as a separate stage, because it's a nice
-       way to keep the operation approximately "free" (i.e., no extra execs).
-
-       Empirically, performing the check when flipping the least significant bit
-       is advantageous, compared to doing it at the time of more disruptive
-       changes, where the program flow may be affected in more violent ways.
-
-       The caveat is that we won't generate dictionaries in the -d mode or -S
-       mode - but that's probably a fair trade-off.
-
-       This won't work particularly well with paths that exhibit variable
-       behavior, but fails gracefully, so we'll carry out the checks anyway.
-
-      */
-
-    if (!dumb_mode && (stage_cur & 7) == 7) {
-      u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-
-      if (stage_cur == stage_max - 1 && cksum == prev_cksum) {
-        /* If at end of file and we are still collecting a string, grab the
-           final character and force output. */
-
-        if (a_len < MAX_AUTO_EXTRA) a_collect[a_len] = out_buf[stage_cur >> 3];
-        a_len++;
-
-        if (a_len >= MIN_AUTO_EXTRA && a_len <= MAX_AUTO_EXTRA)
-          maybe_add_auto(a_collect, a_len);
-
-      } else if (cksum != prev_cksum) {
-        /* Otherwise, if the checksum has changed, see if we have something
-           worthwhile queued up, and collect that if the answer is yes. */
-
-        if (a_len >= MIN_AUTO_EXTRA && a_len <= MAX_AUTO_EXTRA)
-          maybe_add_auto(a_collect, a_len);
-
-        a_len = 0;
-        prev_cksum = cksum;
+  list = get_node_list(in_tree);
+  if (!list) {
+    goto havoc_stage;
+  }
+  list = sortList(list);
+  list_itr = list;
+  while (1) {
+    if (list_itr->next) {
+      if (list_itr->next->start == list_itr->start) {
+        list_temp = list_itr->next;
+        list_itr->next = list_temp->next;
+        ck_free(list_temp);
+      } else {
+        list_itr = list_itr->next;
       }
-
-      /* Continue collecting string, but only if the bit flip actually made
-         any difference - we don't want no-op tokens. */
-
-      if (cksum != queue_cur->exec_cksum) {
-        if (a_len < MAX_AUTO_EXTRA) a_collect[a_len] = out_buf[stage_cur >> 3];
-        a_len++;
-      }
+    } else {
+      break;
     }
   }
 
-  new_hit_cnt = queued_paths + unique_crashes;
-
-  stage_finds[STAGE_FLIP1] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_FLIP1] += stage_max;
-
-  /* Two walking bits. */
-
-  stage_name = "bitflip 2/1";
-  stage_short = "flip2";
-  stage_max = (len << 3) - 1;
-
-  orig_hit_cnt = new_hit_cnt;
-
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
-    stage_cur_byte = stage_cur >> 3;
-
-    FLIP_BIT(out_buf, stage_cur);
-    FLIP_BIT(out_buf, stage_cur + 1);
-
-    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-
-    FLIP_BIT(out_buf, stage_cur);
-    FLIP_BIT(out_buf, stage_cur + 1);
-  }
-
-  new_hit_cnt = queued_paths + unique_crashes;
-
-  stage_finds[STAGE_FLIP2] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_FLIP2] += stage_max;
-
-  /* Four walking bits. */
-
-  stage_name = "bitflip 4/1";
-  stage_short = "flip4";
-  stage_max = (len << 3) - 3;
-
-  orig_hit_cnt = new_hit_cnt;
-
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
-    stage_cur_byte = stage_cur >> 3;
-
-    FLIP_BIT(out_buf, stage_cur);
-    FLIP_BIT(out_buf, stage_cur + 1);
-    FLIP_BIT(out_buf, stage_cur + 2);
-    FLIP_BIT(out_buf, stage_cur + 3);
-
-    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-
-    FLIP_BIT(out_buf, stage_cur);
-    FLIP_BIT(out_buf, stage_cur + 1);
-    FLIP_BIT(out_buf, stage_cur + 2);
-    FLIP_BIT(out_buf, stage_cur + 3);
-  }
-
-  new_hit_cnt = queued_paths + unique_crashes;
-
-  stage_finds[STAGE_FLIP4] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_FLIP4] += stage_max;
+#define FLIP_BIT(_ar, _b)                   \
+  do {                                      \
+    u8 *_arf = (u8 *)(_ar);                 \
+    u32 _bf = (_b);                         \
+    _arf[(_bf) >> 3] ^= (128 >> ((_bf)&7)); \
+  } while (0)
 
   /* Effector map setup. These macros calculate:
 
@@ -848,774 +1636,900 @@ u8 fuzz_one(char** argv) {
 #define EFF_ALEN(_l) (EFF_APOS(_l) + !!EFF_REM(_l))
 #define EFF_SPAN_ALEN(_p, _l) (EFF_APOS((_p) + (_l)-1) - EFF_APOS(_p) + 1)
 
-  /* Initialize effector map for the next step (see comments below). Always
-     flag first and last byte as doing something. */
+  list_itr = list;
+  while (list_itr) {
+    start = list_itr->start;
+    end = list_itr->end;
+    field_len = end - start;
+    /*********************************************
+     * SIMPLE BITFLIP (+dictionary construction) *
+     *********************************************/
+    /* Single walking bit. */
 
-  eff_map = ck_alloc(EFF_ALEN(len));
-  eff_map[0] = 1;
+    stage_short = "flip1";
+    stage_max = end << 3;
+    stage_name = "bitflip 1/1";
 
-  if (EFF_APOS(len - 1) != 0) {
-    eff_map[EFF_APOS(len - 1)] = 1;
-    eff_cnt++;
-  }
+    stage_val_type = STAGE_VAL_NONE;
 
-  /* Walking byte. */
+    orig_hit_cnt = queued_paths + unique_crashes;
 
-  stage_name = "bitflip 8/8";
-  stage_short = "flip8";
-  stage_max = len;
+    prev_cksum = queue_cur->exec_cksum;
 
-  orig_hit_cnt = new_hit_cnt;
+    for (stage_cur = start; stage_cur < stage_max; stage_cur++) {
+      stage_cur_byte = stage_cur >> 3;
 
-  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
-    stage_cur_byte = stage_cur;
+      FLIP_BIT(out_buf, stage_cur);
 
-    out_buf[stage_cur] ^= 0xFF;
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
 
-    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
+      FLIP_BIT(out_buf, stage_cur);
 
-    /* We also use this stage to pull off a simple trick: we identify
-       bytes that seem to have no effect on the current execution path
-       even when fully flipped - and we skip them during more expensive
-       deterministic stages, such as arithmetics or known ints. */
+      /* While flipping the least significant bit in every byte, pull of an
+         extra trick to detect possible syntax tokens. In essence, the idea is
+         that if you have a binary blob like this:
 
-    if (!eff_map[EFF_APOS(stage_cur)]) {
-      u32 cksum;
+         xxxxxxxxIHDRxxxxxxxx
 
-      /* If in dumb mode or if the file is very short, just flag everything
-         without wasting time on checksums. */
+         ...and changing the leading and trailing bytes causes variable or no
+         changes in program flow, but touching any character in the "IHDR"
+         string always produces the same, distinctive path, it's highly likely
+         that "IHDR" is an atomically-checked magic value of special
+         significance to the fuzzed format.
 
-      if (!dumb_mode && len >= EFF_MIN_LEN)
-        cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-      else
-        cksum = ~queue_cur->exec_cksum;
+         We do this here, rather than as a separate stage, because it's a nice
+         way to keep the operation approximately "free" (i.e., no extra execs).
 
-      if (cksum != queue_cur->exec_cksum) {
-        eff_map[EFF_APOS(stage_cur)] = 1;
-        eff_cnt++;
+         Empirically, performing the check when flipping the least significant
+         bit is advantageous, compared to doing it at the time of more
+         disruptive changes, where the program flow may be affected in more
+         violent ways.
+
+         The caveat is that we won't generate dictionaries in the -d mode or -S
+         mode - but that's probably a fair trade-off.
+
+         This won't work particularly well with paths that exhibit variable
+         behavior, but fails gracefully, so we'll carry out the checks anyway.
+
+        */
+
+      if (!dumb_mode && (stage_cur & 7) == 7) {
+        u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+
+        if (stage_cur == stage_max - 1 && cksum == prev_cksum) {
+          /* If at end of file and we are still collecting a string, grab the
+             final character and force output. */
+
+          if (a_len < MAX_AUTO_EXTRA)
+            a_collect[a_len] = out_buf[stage_cur >> 3];
+          a_len++;
+
+          if (a_len >= MIN_AUTO_EXTRA && a_len <= MAX_AUTO_EXTRA)
+            maybe_add_auto(a_collect, a_len);
+
+        } else if (cksum != prev_cksum) {
+          /* Otherwise, if the checksum has changed, see if we have something
+             worthwhile queued up, and collect that if the answer is yes. */
+
+          if (a_len >= MIN_AUTO_EXTRA && a_len <= MAX_AUTO_EXTRA)
+            maybe_add_auto(a_collect, a_len);
+
+          a_len = 0;
+          prev_cksum = cksum;
+        }
+
+        /* Continue collecting string, but only if the bit flip actually made
+           any difference - we don't want no-op tokens. */
+
+        if (cksum != queue_cur->exec_cksum) {
+          if (a_len < MAX_AUTO_EXTRA)
+            a_collect[a_len] = out_buf[stage_cur >> 3];
+          a_len++;
+        }
       }
     }
 
-    out_buf[stage_cur] ^= 0xFF;
-  }
+    new_hit_cnt = queued_paths + unique_crashes;
 
-  /* If the effector map is more than EFF_MAX_PERC dense, just flag the
-     whole thing as worth fuzzing, since we wouldn't be saving much time
-     anyway. */
+    stage_finds[STAGE_FLIP1] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_FLIP1] += field_len << 3;
 
-  if (eff_cnt != EFF_ALEN(len) &&
-      eff_cnt * 100 / EFF_ALEN(len) > EFF_MAX_PERC) {
-    memset(eff_map, 1, EFF_ALEN(len));
+    /* Two walking bits. */
 
-    blocks_eff_select += EFF_ALEN(len);
+    stage_name = "bitflip 2/1";
+    stage_short = "flip2";
+    stage_max = (end << 3) - 1;
 
-  } else {
-    blocks_eff_select += eff_cnt;
-  }
+    orig_hit_cnt = new_hit_cnt;
 
-  blocks_eff_total += EFF_ALEN(len);
+    for (stage_cur = start; stage_cur < stage_max; stage_cur++) {
+      stage_cur_byte = stage_cur >> 3;
 
-  new_hit_cnt = queued_paths + unique_crashes;
+      FLIP_BIT(out_buf, stage_cur);
+      FLIP_BIT(out_buf, stage_cur + 1);
 
-  stage_finds[STAGE_FLIP8] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_FLIP8] += stage_max;
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
 
-  /* Two walking bytes. */
-
-  if (len < 2) goto skip_bitflip;
-
-  stage_name = "bitflip 16/8";
-  stage_short = "flip16";
-  stage_cur = 0;
-  stage_max = len - 1;
-
-  orig_hit_cnt = new_hit_cnt;
-
-  for (i = 0; i < len - 1; i++) {
-    /* Let's consult the effector map... */
-
-    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
-      stage_max--;
-      continue;
+      FLIP_BIT(out_buf, stage_cur);
+      FLIP_BIT(out_buf, stage_cur + 1);
     }
 
-    stage_cur_byte = i;
+    new_hit_cnt = queued_paths + unique_crashes;
 
-    *(u16*)(out_buf + i) ^= 0xFFFF;
+    stage_finds[STAGE_FLIP2] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_FLIP2] += (field_len << 3) - 1;
 
-    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-    stage_cur++;
+    /* Four walking bits. */
 
-    *(u16*)(out_buf + i) ^= 0xFFFF;
-  }
+    stage_name = "bitflip 4/1";
+    stage_short = "flip4";
+    stage_max = (end << 3) - 3;
 
-  new_hit_cnt = queued_paths + unique_crashes;
+    orig_hit_cnt = new_hit_cnt;
 
-  stage_finds[STAGE_FLIP16] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_FLIP16] += stage_max;
+    for (stage_cur = start; stage_cur < stage_max; stage_cur++) {
+      stage_cur_byte = stage_cur >> 3;
 
-  if (len < 4) goto skip_bitflip;
+      FLIP_BIT(out_buf, stage_cur);
+      FLIP_BIT(out_buf, stage_cur + 1);
+      FLIP_BIT(out_buf, stage_cur + 2);
+      FLIP_BIT(out_buf, stage_cur + 3);
 
-  /* Four walking bytes. */
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
 
-  stage_name = "bitflip 32/8";
-  stage_short = "flip32";
-  stage_cur = 0;
-  stage_max = len - 3;
-
-  orig_hit_cnt = new_hit_cnt;
-
-  for (i = 0; i < len - 3; i++) {
-    /* Let's consult the effector map... */
-    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)] &&
-        !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)]) {
-      stage_max--;
-      continue;
+      FLIP_BIT(out_buf, stage_cur);
+      FLIP_BIT(out_buf, stage_cur + 1);
+      FLIP_BIT(out_buf, stage_cur + 2);
+      FLIP_BIT(out_buf, stage_cur + 3);
     }
 
-    stage_cur_byte = i;
+    new_hit_cnt = queued_paths + unique_crashes;
 
-    *(u32*)(out_buf + i) ^= 0xFFFFFFFF;
+    stage_finds[STAGE_FLIP4] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_FLIP4] += (field_len << 3) - 3;
 
-    if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-    stage_cur++;
+    /* Initialize effector map for the next step (see comments below). Always
+       flag first and last byte as doing something. */
 
-    *(u32*)(out_buf + i) ^= 0xFFFFFFFF;
-  }
+    eff_map = ck_alloc(EFF_ALEN(len));
+    eff_map[0] = 1;
 
-  new_hit_cnt = queued_paths + unique_crashes;
-
-  stage_finds[STAGE_FLIP32] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_FLIP32] += stage_max;
-
-skip_bitflip:
-
-  if (no_arith) goto skip_arith;
-
-  /**********************
-   * ARITHMETIC INC/DEC *
-   **********************/
-
-  /* 8-bit arithmetics. */
-
-  stage_name = "arith 8/8";
-  stage_short = "arith8";
-  stage_cur = 0;
-  stage_max = 2 * len * ARITH_MAX;
-
-  stage_val_type = STAGE_VAL_LE;
-
-  orig_hit_cnt = new_hit_cnt;
-
-  for (i = 0; i < len; i++) {
-    u8 orig = out_buf[i];
-
-    /* Let's consult the effector map... */
-
-    if (!eff_map[EFF_APOS(i)]) {
-      stage_max -= 2 * ARITH_MAX;
-      continue;
+    if (EFF_APOS(len - 1) != 0) {
+      eff_map[EFF_APOS(len - 1)] = 1;
+      eff_cnt++;
     }
 
-    stage_cur_byte = i;
+    /* Walking byte. */
 
-    for (j = 1; j <= ARITH_MAX; j++) {
-      u8 r = orig ^ (orig + j);
+    stage_name = "bitflip 8/8";
+    stage_short = "flip8";
+    stage_max = end;
 
-      /* Do arithmetic operations only if the result couldn't be a product
-         of a bitflip. */
+    orig_hit_cnt = new_hit_cnt;
 
-      if (!could_be_bitflip(r)) {
-        stage_cur_val = j;
-        out_buf[i] = orig + j;  // no change of file format
+    for (stage_cur = start; stage_cur < stage_max; stage_cur++) {
+      stage_cur_byte = stage_cur;
 
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
+      out_buf[stage_cur] ^= 0xFF;
 
-      } else
-        stage_max--;
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
 
-      r = orig ^ (orig - j);
+      /* We also use this stage to pull off a simple trick: we identify
+         bytes that seem to have no effect on the current execution path
+         even when fully flipped - and we skip them during more expensive
+         deterministic stages, such as arithmetics or known ints. */
 
-      if (!could_be_bitflip(r)) {
-        stage_cur_val = -j;
-        out_buf[i] = orig - j;  // no change of file format
+      if (!eff_map[EFF_APOS(stage_cur)]) {
+        u32 cksum;
 
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
+        /* If in dumb mode or if the file is very short, just flag everything
+           without wasting time on checksums. */
 
-      } else
-        stage_max--;
+        if (!dumb_mode && len >= EFF_MIN_LEN)
+          cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+        else
+          cksum = ~queue_cur->exec_cksum;
 
-      out_buf[i] = orig;
-    }
-  }
+        if (cksum != queue_cur->exec_cksum) {
+          eff_map[EFF_APOS(stage_cur)] = 1;
+          eff_cnt++;
+        }
+      }
 
-  new_hit_cnt = queued_paths + unique_crashes;
-
-  stage_finds[STAGE_ARITH8] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_ARITH8] += stage_max;
-
-  /* 16-bit arithmetics, both endians. */
-
-  if (len < 2) goto skip_arith;
-
-  stage_name = "arith 16/8";
-  stage_short = "arith16";
-  stage_cur = 0;
-  stage_max = 4 * (len - 1) * ARITH_MAX;
-
-  orig_hit_cnt = new_hit_cnt;
-
-  for (i = 0; i < len - 1; i++) {
-    u16 orig = *(u16*)(out_buf + i);
-
-    /* Let's consult the effector map... */
-
-    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
-      stage_max -= 4 * ARITH_MAX;
-      continue;
+      out_buf[stage_cur] ^= 0xFF;
     }
 
-    stage_cur_byte = i;
+    /* If the effector map is more than EFF_MAX_PERC dense, just flag the
+       whole thing as worth fuzzing, since we wouldn't be saving much time
+       anyway. */
 
-    for (j = 1; j <= ARITH_MAX; j++) {
-      u16 r1 = orig ^ (orig + j), r2 = orig ^ (orig - j),
-          r3 = orig ^ SWAP16(SWAP16(orig) + j),
-          r4 = orig ^ SWAP16(SWAP16(orig) - j);
+    if (eff_cnt != EFF_ALEN(len) &&
+        eff_cnt * 100 / EFF_ALEN(len) > EFF_MAX_PERC) {
+      memset(eff_map, 1, EFF_ALEN(len));
 
-      /* Try little endian addition and subtraction first. Do it only
-         if the operation would affect more than one byte (hence the
-         & 0xff overflow checks) and if it couldn't be a product of
-         a bitflip. */
+      blocks_eff_select += EFF_ALEN(len);
 
-      stage_val_type = STAGE_VAL_LE;
-
-      if ((orig & 0xff) + j > 0xff && !could_be_bitflip(r1)) {
-        stage_cur_val = j;
-        *(u16*)(out_buf + i) = orig + j;
-
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
-
-      } else
-        stage_max--;
-
-      if ((orig & 0xff) < j && !could_be_bitflip(r2)) {
-        stage_cur_val = -j;
-        *(u16*)(out_buf + i) = orig - j;
-
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
-
-      } else
-        stage_max--;
-
-      /* Big endian comes next. Same deal. */
-
-      stage_val_type = STAGE_VAL_BE;
-
-      if ((orig >> 8) + j > 0xff && !could_be_bitflip(r3)) {
-        stage_cur_val = j;
-        *(u16*)(out_buf + i) = SWAP16(SWAP16(orig) + j);
-
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
-
-      } else
-        stage_max--;
-
-      if ((orig >> 8) < j && !could_be_bitflip(r4)) {
-        stage_cur_val = -j;
-        *(u16*)(out_buf + i) = SWAP16(SWAP16(orig) - j);
-
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
-
-      } else
-        stage_max--;
-
-      *(u16*)(out_buf + i) = orig;
-    }
-  }
-
-  new_hit_cnt = queued_paths + unique_crashes;
-
-  stage_finds[STAGE_ARITH16] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_ARITH16] += stage_max;
-
-  /* 32-bit arithmetics, both endians. */
-
-  if (len < 4) goto skip_arith;
-
-  stage_name = "arith 32/8";
-  stage_short = "arith32";
-  stage_cur = 0;
-  stage_max = 4 * (len - 3) * ARITH_MAX;
-
-  orig_hit_cnt = new_hit_cnt;
-
-  for (i = 0; i < len - 3; i++) {
-    u32 orig = *(u32*)(out_buf + i);
-
-    /* Let's consult the effector map... */
-
-    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)] &&
-        !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)]) {
-      stage_max -= 4 * ARITH_MAX;
-      continue;
+    } else {
+      blocks_eff_select += eff_cnt;
     }
 
-    stage_cur_byte = i;
+    blocks_eff_total += EFF_ALEN(len);
 
-    for (j = 1; j <= ARITH_MAX; j++) {
-      u32 r1 = orig ^ (orig + j), r2 = orig ^ (orig - j),
-          r3 = orig ^ SWAP32(SWAP32(orig) + j),
-          r4 = orig ^ SWAP32(SWAP32(orig) - j);
+    new_hit_cnt = queued_paths + unique_crashes;
 
-      /* Little endian first. Same deal as with 16-bit: we only want to
-         try if the operation would have effect on more than two bytes. */
+    stage_finds[STAGE_FLIP8] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_FLIP8] += field_len;
 
-      stage_val_type = STAGE_VAL_LE;
+    /* Two walking bytes. */
 
-      if ((orig & 0xffff) + j > 0xffff && !could_be_bitflip(r1)) {
-        stage_cur_val = j;
-        *(u32*)(out_buf + i) = orig + j;
+    if (field_len < 2) goto skip_bitflip;
 
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
+    stage_name = "bitflip 16/8";
+    stage_short = "flip16";
+    stage_cur = start;
+    stage_max = field_len - 1;
 
-      } else
-        stage_max--;
+    orig_hit_cnt = new_hit_cnt;
 
-      if ((orig & 0xffff) < j && !could_be_bitflip(r2)) {
-        stage_cur_val = -j;
-        *(u32*)(out_buf + i) = orig - j;
+    for (i = start; i < end - 1; i++) {
+      /* Let's consult the effector map... */
 
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
-
-      } else
-        stage_max--;
-
-      /* Big endian next. */
-
-      stage_val_type = STAGE_VAL_BE;
-
-      if ((SWAP32(orig) & 0xffff) + j > 0xffff && !could_be_bitflip(r3)) {
-        stage_cur_val = j;
-        *(u32*)(out_buf + i) = SWAP32(SWAP32(orig) + j);
-
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
-
-      } else
-        stage_max--;
-
-      if ((SWAP32(orig) & 0xffff) < j && !could_be_bitflip(r4)) {
-        stage_cur_val = -j;
-        *(u32*)(out_buf + i) = SWAP32(SWAP32(orig) - j);
-
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
-
-      } else
-        stage_max--;
-
-      *(u32*)(out_buf + i) = orig;
-    }
-  }
-
-  new_hit_cnt = queued_paths + unique_crashes;
-
-  stage_finds[STAGE_ARITH32] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_ARITH32] += stage_max;
-
-skip_arith:
-
-  /**********************
-   * INTERESTING VALUES *
-   **********************/
-
-  stage_name = "interest 8/8";
-  stage_short = "int8";
-  stage_cur = 0;
-  stage_max = len * sizeof(interesting_8);
-
-  stage_val_type = STAGE_VAL_LE;
-
-  orig_hit_cnt = new_hit_cnt;
-
-  /* Setting 8-bit integers. */
-
-  for (i = 0; i < len; i++) {
-    u8 orig = out_buf[i];
-
-    /* Let's consult the effector map... */
-
-    if (!eff_map[EFF_APOS(i)]) {
-      stage_max -= sizeof(interesting_8);
-      continue;
-    }
-
-    stage_cur_byte = i;
-
-    for (j = 0; j < sizeof(interesting_8); j++) {
-      /* Skip if the value could be a product of bitflips or arithmetics. */
-
-      if (could_be_bitflip(orig ^ (u8)interesting_8[j]) ||
-          could_be_arith(orig, (u8)interesting_8[j], 1)) {
+      if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
         stage_max--;
         continue;
       }
 
-      stage_cur_val = interesting_8[j];
-      out_buf[i] = interesting_8[j];  // no change of file format
+      stage_cur_byte = i;
 
-      if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
+      *(u16 *)(out_buf + i) ^= 0xFFFF;
 
-      out_buf[i] = orig;
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
       stage_cur++;
-    }
-  }
 
-  new_hit_cnt = queued_paths + unique_crashes;
-
-  stage_finds[STAGE_INTEREST8] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_INTEREST8] += stage_max;
-
-  /* Setting 16-bit integers, both endians. */
-
-  if (no_arith || len < 2) goto skip_interest;
-
-  stage_name = "interest 16/8";
-  stage_short = "int16";
-  stage_cur = 0;
-  stage_max = 2 * (len - 1) * (sizeof(interesting_16) >> 1);
-
-  orig_hit_cnt = new_hit_cnt;
-
-  for (i = 0; i < len - 1; i++) {
-    u16 orig = *(u16*)(out_buf + i);
-
-    /* Let's consult the effector map... */
-
-    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
-      stage_max -= sizeof(interesting_16);
-      continue;
+      *(u16 *)(out_buf + i) ^= 0xFFFF;
     }
 
-    stage_cur_byte = i;
+    new_hit_cnt = queued_paths + unique_crashes;
 
-    for (j = 0; j < sizeof(interesting_16) / 2; j++) {
-      stage_cur_val = interesting_16[j];
+    stage_finds[STAGE_FLIP16] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_FLIP16] += stage_max;
 
-      /* Skip if this could be a product of a bitflip, arithmetics,
-         or single-byte interesting value insertion. */
+    if (field_len < 4) goto skip_bitflip;
 
-      if (!could_be_bitflip(orig ^ (u16)interesting_16[j]) &&
-          !could_be_arith(orig, (u16)interesting_16[j], 2) &&
-          !could_be_interest(orig, (u16)interesting_16[j], 2, 0)) {
+    /* Four walking bytes. */
+
+    stage_name = "bitflip 32/8";
+    stage_short = "flip32";
+    stage_cur = start;
+    stage_max = end - 3;
+
+    orig_hit_cnt = new_hit_cnt;
+
+    for (i = 0; i < end - 3; i++) {
+      /* Let's consult the effector map... */
+      if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)] &&
+          !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)]) {
+        stage_max--;
+        continue;
+      }
+
+      stage_cur_byte = i;
+
+      *(u32 *)(out_buf + i) ^= 0xFFFFFFFF;
+
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+      stage_cur++;
+
+      *(u32 *)(out_buf + i) ^= 0xFFFFFFFF;
+    }
+
+    new_hit_cnt = queued_paths + unique_crashes;
+
+    stage_finds[STAGE_FLIP32] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_FLIP32] += stage_max;
+
+  skip_bitflip:
+
+    if (no_arith) goto skip_arith;
+
+    /**********************
+     * ARITHMETIC INC/DEC *
+     **********************/
+
+    /* 8-bit arithmetics. */
+
+    stage_name = "arith 8/8";
+    stage_short = "arith8";
+    stage_cur = start;
+    stage_max = 2 * field_len * ARITH_MAX;
+
+    stage_val_type = STAGE_VAL_LE;
+
+    orig_hit_cnt = new_hit_cnt;
+
+    for (i = start; i < end; i++) {
+      u8 orig = out_buf[i];
+
+      /* Let's consult the effector map... */
+
+      if (!eff_map[EFF_APOS(i)]) {
+        stage_max -= 2 * ARITH_MAX;
+        continue;
+      }
+
+      stage_cur_byte = i;
+
+      for (j = 1; j <= ARITH_MAX; j++) {
+        u8 r = orig ^ (orig + j);
+
+        /* Do arithmetic operations only if the result couldn't be a product
+           of a bitflip. */
+
+        if (!could_be_bitflip(r)) {
+          stage_cur_val = j;
+          out_buf[i] = orig + j;  // no change of file format
+
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
+
+        } else
+          stage_max--;
+
+        r = orig ^ (orig - j);
+
+        if (!could_be_bitflip(r)) {
+          stage_cur_val = -j;
+          out_buf[i] = orig - j;  // no change of file format
+
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
+
+        } else
+          stage_max--;
+
+        out_buf[i] = orig;
+      }
+    }
+
+    new_hit_cnt = queued_paths + unique_crashes;
+
+    stage_finds[STAGE_ARITH8] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_ARITH8] += stage_max;
+
+    /* 16-bit arithmetics, both endians. */
+
+    if (field_len < 2) goto skip_arith;
+
+    stage_name = "arith 16/8";
+    stage_short = "arith16";
+    stage_cur = start;
+    stage_max = 4 * (field_len - 1) * ARITH_MAX;
+
+    orig_hit_cnt = new_hit_cnt;
+
+    for (i = start; i < end - 1; i++) {
+      u16 orig = *(u16 *)(out_buf + i);
+
+      /* Let's consult the effector map... */
+
+      if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
+        stage_max -= 4 * ARITH_MAX;
+        continue;
+      }
+
+      stage_cur_byte = i;
+
+      for (j = 1; j <= ARITH_MAX; j++) {
+        u16 r1 = orig ^ (orig + j), r2 = orig ^ (orig - j),
+            r3 = orig ^ SWAP16(SWAP16(orig) + j),
+            r4 = orig ^ SWAP16(SWAP16(orig) - j);
+
+        /* Try little endian addition and subtraction first. Do it only
+           if the operation would affect more than one byte (hence the
+           & 0xff overflow checks) and if it couldn't be a product of
+           a bitflip. */
+
         stage_val_type = STAGE_VAL_LE;
 
-        *(u16*)(out_buf + i) = interesting_16[j];
+        if ((orig & 0xff) + j > 0xff && !could_be_bitflip(r1)) {
+          stage_cur_val = j;
+          *(u16 *)(out_buf + i) = orig + j;
 
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
 
-      } else
-        stage_max--;
+        } else
+          stage_max--;
 
-      if ((u16)interesting_16[j] != SWAP16(interesting_16[j]) &&
-          !could_be_bitflip(orig ^ SWAP16(interesting_16[j])) &&
-          !could_be_arith(orig, SWAP16(interesting_16[j]), 2) &&
-          !could_be_interest(orig, SWAP16(interesting_16[j]), 2, 1)) {
+        if ((orig & 0xff) < j && !could_be_bitflip(r2)) {
+          stage_cur_val = -j;
+          *(u16 *)(out_buf + i) = orig - j;
+
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
+
+        } else
+          stage_max--;
+
+        /* Big endian comes next. Same deal. */
+
         stage_val_type = STAGE_VAL_BE;
 
-        *(u16*)(out_buf + i) = SWAP16(interesting_16[j]);
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
+        if ((orig >> 8) + j > 0xff && !could_be_bitflip(r3)) {
+          stage_cur_val = j;
+          *(u16 *)(out_buf + i) = SWAP16(SWAP16(orig) + j);
 
-      } else
-        stage_max--;
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
+
+        } else
+          stage_max--;
+
+        if ((orig >> 8) < j && !could_be_bitflip(r4)) {
+          stage_cur_val = -j;
+          *(u16 *)(out_buf + i) = SWAP16(SWAP16(orig) - j);
+
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
+
+        } else
+          stage_max--;
+
+        *(u16 *)(out_buf + i) = orig;
+      }
     }
 
-    *(u16*)(out_buf + i) = orig;
-  }
+    new_hit_cnt = queued_paths + unique_crashes;
 
-  new_hit_cnt = queued_paths + unique_crashes;
+    stage_finds[STAGE_ARITH16] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_ARITH16] += stage_max;
 
-  stage_finds[STAGE_INTEREST16] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_INTEREST16] += stage_max;
+    /* 32-bit arithmetics, both endians. */
 
-  if (len < 4) goto skip_interest;
+    if (field_len < 4) goto skip_arith;
 
-  /* Setting 32-bit integers, both endians. */
+    stage_name = "arith 32/8";
+    stage_short = "arith32";
+    stage_cur = start;
+    stage_max = 4 * (field_len - 3) * ARITH_MAX;
 
-  stage_name = "interest 32/8";
-  stage_short = "int32";
-  stage_cur = 0;
-  stage_max = 2 * (len - 3) * (sizeof(interesting_32) >> 2);
+    orig_hit_cnt = new_hit_cnt;
 
-  orig_hit_cnt = new_hit_cnt;
+    for (i = start; i < end - 3; i++) {
+      u32 orig = *(u32 *)(out_buf + i);
 
-  for (i = 0; i < len - 3; i++) {
-    u32 orig = *(u32*)(out_buf + i);
+      /* Let's consult the effector map... */
 
-    /* Let's consult the effector map... */
+      if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)] &&
+          !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)]) {
+        stage_max -= 4 * ARITH_MAX;
+        continue;
+      }
 
-    if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)] &&
-        !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)]) {
-      stage_max -= sizeof(interesting_32) >> 1;
-      continue;
-    }
+      stage_cur_byte = i;
 
-    stage_cur_byte = i;
+      for (j = 1; j <= ARITH_MAX; j++) {
+        u32 r1 = orig ^ (orig + j), r2 = orig ^ (orig - j),
+            r3 = orig ^ SWAP32(SWAP32(orig) + j),
+            r4 = orig ^ SWAP32(SWAP32(orig) - j);
 
-    for (j = 0; j < sizeof(interesting_32) / 4; j++) {
-      stage_cur_val = interesting_32[j];
+        /* Little endian first. Same deal as with 16-bit: we only want to
+           try if the operation would have effect on more than two bytes. */
 
-      /* Skip if this could be a product of a bitflip, arithmetics,
-         or word interesting value insertion. */
-
-      if (!could_be_bitflip(orig ^ (u32)interesting_32[j]) &&
-          !could_be_arith(orig, interesting_32[j], 4) &&
-          !could_be_interest(orig, interesting_32[j], 4, 0)) {
         stage_val_type = STAGE_VAL_LE;
 
-        *(u32*)(out_buf + i) = interesting_32[j];
+        if ((orig & 0xffff) + j > 0xffff && !could_be_bitflip(r1)) {
+          stage_cur_val = j;
+          *(u32 *)(out_buf + i) = orig + j;
 
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-        stage_cur++;
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
 
-      } else
-        stage_max--;
+        } else
+          stage_max--;
 
-      if ((u32)interesting_32[j] != SWAP32(interesting_32[j]) &&
-          !could_be_bitflip(orig ^ SWAP32(interesting_32[j])) &&
-          !could_be_arith(orig, SWAP32(interesting_32[j]), 4) &&
-          !could_be_interest(orig, SWAP32(interesting_32[j]), 4, 1)) {
+        if ((orig & 0xffff) < j && !could_be_bitflip(r2)) {
+          stage_cur_val = -j;
+          *(u32 *)(out_buf + i) = orig - j;
+
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
+
+        } else
+          stage_max--;
+
+        /* Big endian next. */
+
         stage_val_type = STAGE_VAL_BE;
 
-        *(u32*)(out_buf + i) = SWAP32(interesting_32[j]);
-        if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
+        if ((SWAP32(orig) & 0xffff) + j > 0xffff && !could_be_bitflip(r3)) {
+          stage_cur_val = j;
+          *(u32 *)(out_buf + i) = SWAP32(SWAP32(orig) + j);
+
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
+
+        } else
+          stage_max--;
+
+        if ((SWAP32(orig) & 0xffff) < j && !could_be_bitflip(r4)) {
+          stage_cur_val = -j;
+          *(u32 *)(out_buf + i) = SWAP32(SWAP32(orig) - j);
+
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
+
+        } else
+          stage_max--;
+
+        *(u32 *)(out_buf + i) = orig;
+      }
+    }
+
+    new_hit_cnt = queued_paths + unique_crashes;
+
+    stage_finds[STAGE_ARITH32] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_ARITH32] += stage_max;
+
+  skip_arith:
+
+    /**********************
+     * INTERESTING VALUES *
+     **********************/
+
+    stage_name = "interest 8/8";
+    stage_short = "int8";
+    stage_cur = start;
+    stage_max = field_len * sizeof(interesting_8);
+
+    stage_val_type = STAGE_VAL_LE;
+
+    orig_hit_cnt = new_hit_cnt;
+
+    /* Setting 8-bit integers. */
+
+    for (i = start; i < end; i++) {
+      u8 orig = out_buf[i];
+
+      /* Let's consult the effector map... */
+
+      if (!eff_map[EFF_APOS(i)]) {
+        stage_max -= sizeof(interesting_8);
+        continue;
+      }
+
+      stage_cur_byte = i;
+
+      for (j = 0; j < sizeof(interesting_8); j++) {
+        /* Skip if the value could be a product of bitflips or arithmetics. */
+
+        if (could_be_bitflip(orig ^ (u8)interesting_8[j]) ||
+            could_be_arith(orig, (u8)interesting_8[j], 1)) {
+          stage_max--;
+          continue;
+        }
+
+        stage_cur_val = interesting_8[j];
+        out_buf[i] = interesting_8[j];  // no change of file format
+
+        if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+
+        out_buf[i] = orig;
         stage_cur++;
-
-      } else
-        stage_max--;
+      }
     }
 
-    *(u32*)(out_buf + i) = orig;
-  }
+    new_hit_cnt = queued_paths + unique_crashes;
 
-  new_hit_cnt = queued_paths + unique_crashes;
+    stage_finds[STAGE_INTEREST8] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_INTEREST8] += stage_max;
 
-  stage_finds[STAGE_INTEREST32] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_INTEREST32] += stage_max;
+    /* Setting 16-bit integers, both endians. */
 
-skip_interest:
-  /********************
-   * DICTIONARY STUFF *
-   ********************/
+    if (no_arith || field_len < 2) goto skip_interest;
 
-  if (!extras_cnt) goto skip_user_extras;
-  /* Overwrite with user-supplied extras. */
+    stage_name = "interest 16/8";
+    stage_short = "int16";
+    stage_cur = 0;
+    stage_max = 2 * (field_len - 1) * (sizeof(interesting_16) >> 1);
 
-  stage_name = "user extras (over)";
-  stage_short = "ext_UO";
-  stage_cur = 0;
-  stage_max = extras_cnt * len;
+    orig_hit_cnt = new_hit_cnt;
 
-  stage_val_type = STAGE_VAL_NONE;
+    for (i = start; i < end - 1; i++) {
+      u16 orig = *(u16 *)(out_buf + i);
 
-  orig_hit_cnt = new_hit_cnt;
+      /* Let's consult the effector map... */
 
-  for (i = 0; i < len; i++) {
-    u32 last_len = 0;
-
-    stage_cur_byte = i;
-
-    /* Extras are sorted by size, from smallest to largest. This means
-       that we don't have to worry about restoring the buffer in
-       between writes at a particular offset determined by the outer
-       loop. */
-
-    for (j = 0; j < extras_cnt; j++) {
-      /* Skip extras probabilistically if extras_cnt > MAX_DET_EXTRAS. Also
-         skip them if there's no room to insert the payload, if the token
-         is redundant, or if its entire span has no bytes set in the effector
-         map. */
-
-      if ((extras_cnt > MAX_DET_EXTRAS && UR(extras_cnt) >= MAX_DET_EXTRAS) ||
-          extras[j].len > len - i ||
-          !memcmp(extras[j].data, out_buf + i, extras[j].len) ||
-          !memchr(eff_map + EFF_APOS(i), 1, EFF_SPAN_ALEN(i, extras[j].len))) {
-        stage_max--;
+      if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)]) {
+        stage_max -= sizeof(interesting_16);
         continue;
       }
 
-      last_len = extras[j].len;
-      memcpy(out_buf + i, extras[j].data, last_len);  // no change of file
-                                                      // format
+      stage_cur_byte = i;
 
-      if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
+      for (j = 0; j < sizeof(interesting_16) / 2; j++) {
+        stage_cur_val = interesting_16[j];
 
-      stage_cur++;
+        /* Skip if this could be a product of a bitflip, arithmetics,
+           or single-byte interesting value insertion. */
+
+        if (!could_be_bitflip(orig ^ (u16)interesting_16[j]) &&
+            !could_be_arith(orig, (u16)interesting_16[j], 2) &&
+            !could_be_interest(orig, (u16)interesting_16[j], 2, 0)) {
+          stage_val_type = STAGE_VAL_LE;
+
+          *(u16 *)(out_buf + i) = interesting_16[j];
+
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
+
+        } else
+          stage_max--;
+
+        if ((u16)interesting_16[j] != SWAP16(interesting_16[j]) &&
+            !could_be_bitflip(orig ^ SWAP16(interesting_16[j])) &&
+            !could_be_arith(orig, SWAP16(interesting_16[j]), 2) &&
+            !could_be_interest(orig, SWAP16(interesting_16[j]), 2, 1)) {
+          stage_val_type = STAGE_VAL_BE;
+
+          *(u16 *)(out_buf + i) = SWAP16(interesting_16[j]);
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
+
+        } else
+          stage_max--;
+      }
+
+      *(u16 *)(out_buf + i) = orig;
     }
 
-    /* Restore all the clobbered memory. */
-    memcpy(out_buf + i, in_buf + i, last_len);
-  }
+    new_hit_cnt = queued_paths + unique_crashes;
 
-  new_hit_cnt = queued_paths + unique_crashes;
+    stage_finds[STAGE_INTEREST16] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_INTEREST16] += stage_max;
 
-  stage_finds[STAGE_EXTRAS_UO] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_EXTRAS_UO] += stage_max;
+    if (field_len < 4) goto skip_interest;
 
-  /* Insertion of user-supplied extras. */
+    /* Setting 32-bit integers, both endians. */
 
-  stage_name = "user extras (insert)";
-  stage_short = "ext_UI";
-  stage_cur = 0;
-  stage_max = extras_cnt * (len + 1);
+    stage_name = "interest 32/8";
+    stage_short = "int32";
+    stage_cur = 0;
+    stage_max = 2 * (field_len - 3) * (sizeof(interesting_32) >> 2);
 
-  orig_hit_cnt = new_hit_cnt;
+    orig_hit_cnt = new_hit_cnt;
 
-  ex_tmp = ck_alloc(len + MAX_DICT_FILE);
+    for (i = start; i < end - 3; i++) {
+      u32 orig = *(u32 *)(out_buf + i);
 
-  json_iter = out_json->child;
-  for (i = 0; i <= len; i++) {
-    stage_cur_byte = i;
+      /* Let's consult the effector map... */
 
-    for (j = 0; j < extras_cnt; j++) {
-      if (len + extras[j].len > MAX_FILE) {
-        stage_max--;
+      if (!eff_map[EFF_APOS(i)] && !eff_map[EFF_APOS(i + 1)] &&
+          !eff_map[EFF_APOS(i + 2)] && !eff_map[EFF_APOS(i + 3)]) {
+        stage_max -= sizeof(interesting_32) >> 1;
         continue;
       }
 
-      /* Insert token */
-      memcpy(ex_tmp + i, extras[j].data, extras[j].len);
+      stage_cur_byte = i;
 
-      /* Copy tail */
-      memcpy(ex_tmp + i + extras[j].len, out_buf + i, len - i);
+      for (j = 0; j < sizeof(interesting_32) / 4; j++) {
+        stage_cur_val = interesting_32[j];
 
-      /* Update format file */
-      insert_block(out_json, i, extras[j].len);
+        /* Skip if this could be a product of a bitflip, arithmetics,
+           or word interesting value insertion. */
 
-      if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len, out_json)) {
-        ck_free(ex_tmp);
-        goto abandon_entry;
-      }
-      stage_cur++;
-      cJSON_Delete(out_json);
-      out_json = cJSON_Duplicate(in_json, 1);
-    }
+        if (!could_be_bitflip(orig ^ (u32)interesting_32[j]) &&
+            !could_be_arith(orig, interesting_32[j], 4) &&
+            !could_be_interest(orig, interesting_32[j], 4, 0)) {
+          stage_val_type = STAGE_VAL_LE;
 
-    /* Copy head */
-    ex_tmp[i] = out_buf[i];
-  }
+          *(u32 *)(out_buf + i) = interesting_32[j];
 
-  // for (j = 0; j < extras_cnt; j++) {
-  //   if (len + extras[j].len > MAX_FILE) {
-  //     stage_max--;
-  //     continue;
-  //   }
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
 
-  //   json_iter = out_json->child;
-  //   while(json_iter) {
-  //     cJSON_SetIntValue(json_iter->child, CHUNK_START(json_iter) +
-  //     extras[j].len); cJSON_SetIntValue(json_iter->child->next,
-  //     CHUNK_END(json_iter) + extras[j].len); json_iter = json_iter->next;
-  //   }
-  //   cJSON_SetIntValue(out_json->child->child, 0);
-  //   json_iter = out_json->child;
+        } else
+          stage_max--;
 
-  //   for (i = 0; i <= len; i++) {
-  //     stage_cur_byte = i;
-  //     /* Insert token */
-  //     memcpy(ex_tmp + i, extras[j].data, extras[j].len);
+        if ((u32)interesting_32[j] != SWAP32(interesting_32[j]) &&
+            !could_be_bitflip(orig ^ SWAP32(interesting_32[j])) &&
+            !could_be_arith(orig, SWAP32(interesting_32[j]), 4) &&
+            !could_be_interest(orig, SWAP32(interesting_32[j]), 4, 1)) {
+          stage_val_type = STAGE_VAL_BE;
 
-  //     /* Copy tail */
-  //     memcpy(ex_tmp + i + extras[j].len, out_buf + i, len - i);
+          *(u32 *)(out_buf + i) = SWAP32(interesting_32[j]);
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+            goto abandon_entry;
+          stage_cur++;
 
-  //     /* Update format file */
-  //     if (i > CHUNK_END(json_iter)) {
-  //       cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) -
-  //       extras[j].len); json_iter = json_iter->next;
-  //       cJSON_SetIntValue(json_iter->child, CHUNK_START(json_iter) -
-  //       extras[j].len);
-  //     }
-  //     if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len, out_json)) {
-  //       ck_free(ex_tmp);
-  //       goto abandon_entry;
-  //     }
-
-  //     stage_cur++;
-
-  //     /* Copy head */
-  //     ex_tmp[i] = out_buf[i];
-  //   }
-  //   cJSON_SetIntValue(json_iter->child->next, CHUNK_END(json_iter) -
-  //   extras[j].len);
-  // }
-  cJSON_Delete(out_json);
-  out_json = cJSON_Duplicate(in_json, 1);
-
-  ck_free(ex_tmp);
-
-  new_hit_cnt = queued_paths + unique_crashes;
-
-  stage_finds[STAGE_EXTRAS_UI] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_EXTRAS_UI] += stage_max;
-
-skip_user_extras:
-
-  if (!a_extras_cnt) goto skip_extras;
-
-  stage_name = "auto extras (over)";
-  stage_short = "ext_AO";
-  stage_cur = 0;
-  stage_max = MIN(a_extras_cnt, USE_AUTO_EXTRAS) * len;
-
-  stage_val_type = STAGE_VAL_NONE;
-
-  orig_hit_cnt = new_hit_cnt;
-
-  for (i = 0; i < len; i++) {
-    u32 last_len = 0;
-
-    stage_cur_byte = i;
-
-    for (j = 0; j < MIN(a_extras_cnt, USE_AUTO_EXTRAS); j++) {
-      /* See the comment in the earlier code; extras are sorted by size. */
-
-      if (a_extras[j].len > len - i ||
-          !memcmp(a_extras[j].data, out_buf + i, a_extras[j].len) ||
-          !memchr(eff_map + EFF_APOS(i), 1,
-                  EFF_SPAN_ALEN(i, a_extras[j].len))) {
-        stage_max--;
-        continue;
+        } else
+          stage_max--;
       }
 
-      last_len = a_extras[j].len;
-      memcpy(out_buf + i, a_extras[j].data,
-             last_len);  // no change of file format
-
-      if (common_fuzz_stuff(argv, out_buf, len, out_json)) goto abandon_entry;
-
-      stage_cur++;
+      *(u32 *)(out_buf + i) = orig;
     }
 
-    /* Restore all the clobbered memory. */
-    memcpy(out_buf + i, in_buf + i, last_len);
+    new_hit_cnt = queued_paths + unique_crashes;
+
+    stage_finds[STAGE_INTEREST32] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_INTEREST32] += stage_max;
+
+  skip_interest:
+    /********************
+     * DICTIONARY STUFF *
+     ********************/
+
+    if (!extras_cnt) goto skip_user_extras;
+    /* Overwrite with user-supplied extras. */
+
+    stage_name = "user extras (over)";
+    stage_short = "ext_UO";
+    stage_cur = start;
+    stage_max = extras_cnt * field_len;
+
+    stage_val_type = STAGE_VAL_NONE;
+
+    orig_hit_cnt = new_hit_cnt;
+
+    for (i = start; i < end; i++) {
+      u32 last_len = 0;
+
+      stage_cur_byte = i;
+
+      /* Extras are sorted by size, from smallest to largest. This means
+         that we don't have to worry about restoring the buffer in
+         between writes at a particular offset determined by the outer
+         loop. */
+
+      for (j = 0; j < extras_cnt; j++) {
+        /* Skip extras probabilistically if extras_cnt > MAX_DET_EXTRAS. Also
+           skip them if there's no room to insert the payload, if the token
+           is redundant, or if its entire span has no bytes set in the effector
+           map. */
+
+        if ((extras_cnt > MAX_DET_EXTRAS && UR(extras_cnt) >= MAX_DET_EXTRAS) ||
+            extras[j].len > end - i ||
+            !memcmp(extras[j].data, out_buf + i, extras[j].len) ||
+            !memchr(eff_map + EFF_APOS(i), 1,
+                    EFF_SPAN_ALEN(i, extras[j].len))) {
+          stage_max--;
+          continue;
+        }
+
+        last_len = extras[j].len;
+        memcpy(out_buf + i, extras[j].data, last_len);  // no change of file
+                                                        // format
+
+        if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+
+        stage_cur++;
+      }
+
+      /* Restore all the clobbered memory. */
+      memcpy(out_buf + i, in_buf + i, last_len);
+    }
+
+    new_hit_cnt = queued_paths + unique_crashes;
+
+    stage_finds[STAGE_EXTRAS_UO] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_EXTRAS_UO] += stage_max;
+
+    /* Insertion of user-supplied extras. */
+
+    stage_name = "user extras (insert)";
+    stage_short = "ext_UI";
+    stage_cur = start;
+    stage_max = extras_cnt * (field_len + 1);
+
+    orig_hit_cnt = new_hit_cnt;
+
+    ex_tmp = ck_alloc(len + MAX_DICT_FILE);
+
+    for (i = start; i <= end; i++) {
+      stage_cur_byte = i;
+
+      for (j = 0; j < extras_cnt; j++) {
+        if (len + extras[j].len > MAX_FILE) {
+          stage_max--;
+          continue;
+        }
+
+        /* Insert token */
+        memcpy(ex_tmp + i, extras[j].data, extras[j].len);
+
+        /* Copy tail */
+        memcpy(ex_tmp + i + extras[j].len, out_buf + i, len - i);
+
+        /* Update format file */
+        insert_block(out_tree, i, extras[j].len);
+
+        if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len, out_tree)) {
+          ck_free(ex_tmp);
+          goto abandon_entry;
+        }
+        stage_cur++;
+        free_tree(out_tree, True);
+        // out_json = cJSON_Duplicate(in_json, 1);
+        out_tree = chunk_duplicate(in_tree, True);
+      }
+
+      /* Copy head */
+      ex_tmp[i] = out_buf[i];
+    }
+    free_tree(out_tree, True);
+    out_tree = chunk_duplicate(in_tree, 1);
+
+    ck_free(ex_tmp);
+
+    new_hit_cnt = queued_paths + unique_crashes;
+
+    stage_finds[STAGE_EXTRAS_UI] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_EXTRAS_UI] += stage_max;
+
+  skip_user_extras:
+
+    if (!a_extras_cnt) goto skip_extras;
+
+    stage_name = "auto extras (over)";
+    stage_short = "ext_AO";
+    stage_cur = start;
+    stage_max = MIN(a_extras_cnt, USE_AUTO_EXTRAS) * field_len;
+
+    stage_val_type = STAGE_VAL_NONE;
+
+    orig_hit_cnt = new_hit_cnt;
+
+    for (i = start; i < end; i++) {
+      u32 last_len = 0;
+
+      stage_cur_byte = i;
+
+      for (j = 0; j < MIN(a_extras_cnt, USE_AUTO_EXTRAS); j++) {
+        /* See the comment in the earlier code; extras are sorted by size. */
+
+        if (a_extras[j].len > end - i ||
+            !memcmp(a_extras[j].data, out_buf + i, a_extras[j].len) ||
+            !memchr(eff_map + EFF_APOS(i), 1,
+                    EFF_SPAN_ALEN(i, a_extras[j].len))) {
+          stage_max--;
+          continue;
+        }
+
+        last_len = a_extras[j].len;
+        memcpy(out_buf + i, a_extras[j].data,
+               last_len);  // no change of file format
+
+        if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+
+        stage_cur++;
+      }
+
+      /* Restore all the clobbered memory. */
+      memcpy(out_buf + i, in_buf + i, last_len);
+    }
+
+    new_hit_cnt = queued_paths + unique_crashes;
+
+    stage_finds[STAGE_EXTRAS_AO] += new_hit_cnt - orig_hit_cnt;
+    stage_cycles[STAGE_EXTRAS_AO] += stage_max;
+
+  skip_extras:
+
+    list_itr = list_itr->next;
   }
-
-  new_hit_cnt = queued_paths + unique_crashes;
-
-  stage_finds[STAGE_EXTRAS_AO] += new_hit_cnt - orig_hit_cnt;
-  stage_cycles[STAGE_EXTRAS_AO] += stage_max;
-
-skip_extras:
 
   /* If we made this to here without jumping to havoc_stage or abandon_entry,
      we're properly done with deterministic steps and can mark it as such
@@ -1692,11 +2606,11 @@ havoc_stage:
           if (temp_len < 2) break;
 
           if (UR(2)) {
-            *(u16*)(out_buf + UR(temp_len - 1)) =
+            *(u16 *)(out_buf + UR(temp_len - 1)) =
                 interesting_16[UR(sizeof(interesting_16) >> 1)];
 
           } else {
-            *(u16*)(out_buf + UR(temp_len - 1)) =
+            *(u16 *)(out_buf + UR(temp_len - 1)) =
                 SWAP16(interesting_16[UR(sizeof(interesting_16) >> 1)]);
           }
 
@@ -1709,11 +2623,11 @@ havoc_stage:
           if (temp_len < 4) break;
 
           if (UR(2)) {
-            *(u32*)(out_buf + UR(temp_len - 3)) =
+            *(u32 *)(out_buf + UR(temp_len - 3)) =
                 interesting_32[UR(sizeof(interesting_32) >> 2)];
 
           } else {
-            *(u32*)(out_buf + UR(temp_len - 3)) =
+            *(u32 *)(out_buf + UR(temp_len - 3)) =
                 SWAP32(interesting_32[UR(sizeof(interesting_32) >> 2)]);
           }
 
@@ -1742,14 +2656,14 @@ havoc_stage:
           if (UR(2)) {
             u32 pos = UR(temp_len - 1);
 
-            *(u16*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
+            *(u16 *)(out_buf + pos) -= 1 + UR(ARITH_MAX);
 
           } else {
             u32 pos = UR(temp_len - 1);
             u16 num = 1 + UR(ARITH_MAX);
 
-            *(u16*)(out_buf + pos) =
-                SWAP16(SWAP16(*(u16*)(out_buf + pos)) - num);
+            *(u16 *)(out_buf + pos) =
+                SWAP16(SWAP16(*(u16 *)(out_buf + pos)) - num);
           }
 
           break;
@@ -1763,14 +2677,14 @@ havoc_stage:
           if (UR(2)) {
             u32 pos = UR(temp_len - 1);
 
-            *(u16*)(out_buf + pos) += 1 + UR(ARITH_MAX);
+            *(u16 *)(out_buf + pos) += 1 + UR(ARITH_MAX);
 
           } else {
             u32 pos = UR(temp_len - 1);
             u16 num = 1 + UR(ARITH_MAX);
 
-            *(u16*)(out_buf + pos) =
-                SWAP16(SWAP16(*(u16*)(out_buf + pos)) + num);
+            *(u16 *)(out_buf + pos) =
+                SWAP16(SWAP16(*(u16 *)(out_buf + pos)) + num);
           }
 
           break;
@@ -1784,14 +2698,14 @@ havoc_stage:
           if (UR(2)) {
             u32 pos = UR(temp_len - 3);
 
-            *(u32*)(out_buf + pos) -= 1 + UR(ARITH_MAX);
+            *(u32 *)(out_buf + pos) -= 1 + UR(ARITH_MAX);
 
           } else {
             u32 pos = UR(temp_len - 3);
             u32 num = 1 + UR(ARITH_MAX);
 
-            *(u32*)(out_buf + pos) =
-                SWAP32(SWAP32(*(u32*)(out_buf + pos)) - num);
+            *(u32 *)(out_buf + pos) =
+                SWAP32(SWAP32(*(u32 *)(out_buf + pos)) - num);
           }
 
           break;
@@ -1805,14 +2719,14 @@ havoc_stage:
           if (UR(2)) {
             u32 pos = UR(temp_len - 3);
 
-            *(u32*)(out_buf + pos) += 1 + UR(ARITH_MAX);
+            *(u32 *)(out_buf + pos) += 1 + UR(ARITH_MAX);
 
           } else {
             u32 pos = UR(temp_len - 3);
             u32 num = 1 + UR(ARITH_MAX);
 
-            *(u32*)(out_buf + pos) =
-                SWAP32(SWAP32(*(u32*)(out_buf + pos)) + num);
+            *(u32 *)(out_buf + pos) =
+                SWAP32(SWAP32(*(u32 *)(out_buf + pos)) + num);
           }
 
           break;
@@ -1830,23 +2744,23 @@ havoc_stage:
           /* Delete bytes. We're making this a bit more likely
              than insertion (the next option) in hopes of keeping
              files reasonably small. */
-          u32 del_from, del_len;
+          // u32 del_from, del_len;
 
-          if (temp_len < 2) break;
+          // if (temp_len < 2) break;
 
-          /* Don't delete too much. */
+          // /* Don't delete too much. */
 
-          del_len = choose_block_len(temp_len - 1);
+          // del_len = choose_block_len(temp_len - 1);
 
-          del_from = UR(temp_len - del_len + 1);
+          // del_from = UR(temp_len - del_len + 1);
 
-          memmove(out_buf + del_from, out_buf + del_from + del_len,
-                  temp_len - del_from - del_len);
+          // memmove(out_buf + del_from, out_buf + del_from + del_len,
+          //         temp_len - del_from - del_len);
 
-          temp_len -= del_len;
+          // temp_len -= del_len;
 
-          /* Update format file */
-          delete_block(out_json, del_from, del_len);
+          // /* Update format file */
+          // delete_block(out_json, del_from, del_len);
           break;
         }
 
@@ -1857,7 +2771,7 @@ havoc_stage:
 
             u8 actually_clone = UR(4);
             u32 clone_from, clone_to, clone_len;
-            u8* new_buf;
+            u8 *new_buf;
 
             if (actually_clone) {
               clone_len = choose_block_len(temp_len);
@@ -1893,7 +2807,7 @@ havoc_stage:
             temp_len += clone_len;
 
             /* Update format file */
-            insert_block(out_json, clone_from, clone_len);
+            insert_block(out_tree, clone_from, clone_len);
           }
 
           break;
@@ -1923,29 +2837,31 @@ havoc_stage:
         }
 
         case 15: {
-          u32 chunk_num;
-          chunk_num = cJSON_GetArraySize(out_json);
-          out_buf = insert_chunk(out_buf, &temp_len, out_json, UR(chunk_num),
-                                 UR(chunk_num + 1));
+          // u32 chunk_num;
+          // chunk_num = cJSON_GetArraySize(out_json);
+          // out_buf = insert_chunk(out_buf, &temp_len, out_json, UR(chunk_num),
+          //                        UR(chunk_num + 1));
           break;
         }
 
         case 16: {
-          u32 chunk_num;
-          chunk_num = cJSON_GetArraySize(out_json);
-          if (chunk_num > 1) {
-            out_buf = delete_chunk(out_buf, &temp_len, out_json, UR(chunk_num));
-          }
+          // u32 chunk_num;
+          // chunk_num = cJSON_GetArraySize(out_json);
+          // if (chunk_num > 1) {
+          //   out_buf = delete_chunk(out_buf, &temp_len, out_json,
+          //   UR(chunk_num));
+          // }
           break;
         }
 
         case 17: {
-          u32 chunk_num;
-          chunk_num = cJSON_GetArraySize(out_json);
-          if (chunk_num > 1) {
-            out_buf = exchange_chunk(out_buf, temp_len, out_json, UR(chunk_num),
-                                     UR(chunk_num));
-          }
+          // u32 chunk_num;
+          // chunk_num = cJSON_GetArraySize(out_json);
+          // if (chunk_num > 1) {
+          //   out_buf = exchange_chunk(out_buf, temp_len, out_json,
+          //   UR(chunk_num),
+          //                            UR(chunk_num));
+          // }
           break;
         }
 
@@ -1953,12 +2869,13 @@ havoc_stage:
              present in the dictionaries. */
 
         case 18: {
-          if (extras_cnt > 0) {
-            u32 extra = UR(extras_cnt);
-            u32 chunk_index = UR(cJSON_GetArraySize(out_json));
-            replace_chunk_id(out_buf, out_json, chunk_index, extras[extra].data,
-                             extras[extra].len);
-          }
+          // if (extras_cnt > 0) {
+          //   u32 extra = UR(extras_cnt);
+          //   u32 chunk_index = UR(cJSON_GetArraySize(out_json));
+          //   replace_chunk_id(out_buf, out_json, chunk_index,
+          //   extras[extra].data,
+          //                    extras[extra].len);
+          // }
           break;
         }
 
@@ -1996,7 +2913,7 @@ havoc_stage:
 
         case 20: {
           u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
-          u8* new_buf;
+          u8 *new_buf;
 
           /* Insert an extra. Do the same dice-rolling stuff as for the
              previous case. */
@@ -2039,14 +2956,14 @@ havoc_stage:
           temp_len += extra_len;
 
           /* Update format file */
-          insert_block(out_json, insert_at, extra_len);
+          insert_block(out_tree, insert_at, extra_len);
 
           break;
         }
       }
     }
 
-    if (common_fuzz_stuff(argv, out_buf, temp_len, out_json))
+    if (common_fuzz_stuff(argv, out_buf, temp_len, out_tree))
       goto abandon_entry;
 
     /* out_buf might have been mangled a bit, so let's restore it to its
@@ -2057,8 +2974,10 @@ havoc_stage:
     }
     temp_len = len;
     memcpy(out_buf, in_buf, len);
-    cJSON_Delete(out_json);
-    out_json = cJSON_Duplicate(in_json, 1);
+    // cJSON_Delete(out_json);
+    // out_json = cJSON_Duplicate(in_json, 1);
+    free_tree(out_tree, True);
+    out_tree = chunk_duplicate(in_tree, 1);
 
     /* If we're finding new stuff, let's run for a bit longer, limits
        permitting. */
@@ -2098,12 +3017,12 @@ retry_splicing:
 
   if (use_splicing && splice_cycle++ < SPLICE_CYCLES && queued_paths > 1 &&
       queue_cur->len > 1) {
-    struct queue_entry* target;
+    struct queue_entry *target;
     u32 tid, split_at;
-    u8* new_buf;
+    u8 *new_buf;
     s32 f_diff, l_diff;
-    cJSON* target_json;
-    cJSON* target_iter;
+    cJSON *target_json;
+    Chunk *target_tree;
 
     /* First of all, if we've modified in_buf for havoc, let's clean that
        up... */
@@ -2153,6 +3072,7 @@ retry_splicing:
     /* Parse the format file of the testcase */
 
     target_json = parse_json(target->format_file);
+    target_tree = json_to_tree(target_json);
 
     /* Find a suitable splicing location, somewhere between the first and
        the last differing byte. Bail out if the difference is just a single
@@ -2163,6 +3083,7 @@ retry_splicing:
     if (f_diff < 0 || l_diff < 2 || f_diff == l_diff) {
       ck_free(new_buf);
       cJSON_Delete(target_json);
+      free_tree(target_tree, True);
       goto retry_splicing;
     }
 
@@ -2181,29 +3102,8 @@ retry_splicing:
     memcpy(out_buf, in_buf, len);
 
     /* Update the format file. */
-    cJSON_Delete(in_json);
-    in_json = parse_json(queue_cur->format_file);
-
-    json_iter = in_json->child;
-    while (CHUNK_END(json_iter) < split_at) {
-      json_iter = json_iter->next;
-    }
-    target_iter = target_json->child;
-    while (CHUNK_END(target_iter) < split_at) {
-      target_iter = target_iter->next;
-    }
-    cJSON_SetIntValue(json_iter->child->next, CHUNK_END(target_iter));
-    cJSON* json_temp;
-    json_temp = json_iter->next;
-    json_iter->next = target_iter->next;
-    if (json_iter->next != NULL) {
-      json_iter->next->prev = json_iter;
-    }
-    target_iter->next = json_temp;
-
-    cJSON_Delete(out_json);
-    cJSON_Delete(target_json);
-    out_json = cJSON_Duplicate(in_json, 1);
+    in_tree = splice_tree(in_tree, target_tree, split_at);
+    out_tree = chunk_duplicate(in_tree, True);
     goto havoc_stage;
   }
 
@@ -2233,8 +3133,11 @@ abandon_entry:
   cJSON_Delete(in_json);
   cJSON_Delete(out_json);
 
+  free_node_list(list);
+  free_tree(in_tree, True);
+  free_tree(out_tree, True);
+
   return ret_val;
 
 #undef FLIP_BIT
 }
-

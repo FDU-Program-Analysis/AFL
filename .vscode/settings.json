@@ -1,0 +1,21 @@
+{
+    "files.associations": {
+        "array": "cpp",
+        "bitset": "cpp",
+        "type_traits": "cpp",
+        "*.tcc": "cpp",
+        "fstream": "cpp",
+        "ostream": "cpp",
+        "streambuf": "cpp",
+        "sstream": "cpp",
+        "*.def": "cpp",
+        "alloc-inl.h": "c",
+        "initializer_list": "c",
+        "hashtable": "c",
+        "string_view": "c",
+        "utility": "c",
+        "afl-fuzz.h": "c",
+        "types.h": "c",
+        "time.h": "c"
+    }
+}

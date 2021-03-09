@@ -1,0 +1,226 @@
+{
+    "box01": {
+        "start": 0,
+        "end": 8,
+        "id": {
+            "start,": 4,
+            "end": 8,
+            "name": "ftyp"
+        }
+    },
+    "box02": {
+        "start": 8,
+        "end": 16,
+        "id": {
+            "start": 0,
+            "end": 4,
+            "name": "mp42"
+        }
+    },
+    "box03": {
+        "start": 16,
+        "end": 20,
+        "id": {
+            "start": 0,
+            "end": 4,
+            "name": "mp42"
+        }
+    },
+    "box04": {
+        "start": 20,
+        "end": 24,
+        "id": {
+            "start": 0,
+            "end": 4,
+            "name": "isom"
+        }
+    },
+    "box1": {
+        "start": 24,
+        "end": 32,
+        "id": {
+            "start": 4,
+            "end": 8
+        }
+    },
+    "box2": {
+        "start": 32,
+        "end": 437,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "mdat"
+        }
+    },
+    "box3": {
+        "start": 437,
+        "end": 445,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "moov"
+        }
+    },
+    "box30": {
+        "start": 445,
+        "end": 553,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "mvhd"
+        }
+    },
+    "box31": {
+        "start": 553,
+        "end": 561,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "trak"
+        }
+    },
+    "box310": {
+        "start": 561,
+        "end": 653,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "tkhd"
+        }
+    },
+    "box311": {
+        "start": 653,
+        "end": 661,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "mdia"
+        }
+    },
+    "box3110": {
+        "start": 661,
+        "end": 693,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "mdhd"
+        }
+    },
+    "box3111": {
+        "start": 693,
+        "end": 745,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "hdlr"
+        }
+    },
+    "box3112": {
+        "start": 745,
+        "end": 753,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "minf"
+        }
+    },
+    "box31120": {
+        "start": 753,
+        "end": 773,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "vmhd"
+        }
+    },
+    "box31121": {
+        "start": 773,
+        "end": 781,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "dinf"
+        }
+    },
+    "box311210": {
+        "start": 781,
+        "end": 809,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "dref"
+        }
+    },
+    "box31122": {
+        "start": 809,
+        "end": 817,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "stbl"
+        }
+    },
+    "box311220": {
+        "start": 817,
+        "end": 979,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "stsd"
+        }
+    },
+    "box311221": {
+        "start": 979,
+        "end": 1003,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "stts"
+        }
+    },
+    "box311222": {
+        "start": 1003,
+        "end": 1099,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "ctts"
+        }
+    },
+    "box311223": {
+        "start": 1099,
+        "end": 1151,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "stsc"
+        }
+    },
+    "box311224": {
+        "start": 1151,
+        "end": 1219,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "stsz"
+        }
+    },
+    "box311225": {
+        "start": 1219,
+        "end": 1247,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "stco"
+        }
+    },
+    "box311226": {
+        "start": 1247,
+        "end": 1267,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "stss"
+        }
+    }
+}

@@ -112,6 +112,11 @@ void read_testcases(void) {
       free(nl[i]);
       continue;
     }
+    /* skip .track file */
+    if(file_type != NULL && strcmp(file_type, ".track") == 0) {
+      free(nl[i]);
+      continue;
+    }
 
     struct stat st;
 
@@ -119,6 +124,7 @@ void read_testcases(void) {
     u8* dfn =
         alloc_printf("%s/.state/deterministic_done/%s", in_dir, nl[i]->d_name);
     u8* format_file = alloc_printf("%s/%s.json", in_dir, nl[i]->d_name);
+    u8* track_file = alloc_printf("%s/%s.track", in_dir, nl[i]->d_name);
 
     u8 passed_det = 0;
 
@@ -154,7 +160,12 @@ void read_testcases(void) {
       PFATAL("Unable to access '%s'", format_file);
     }
 
-    add_to_queue(fn, format_file, st.st_size, passed_det);
+    if(access(track_file, R_OK)) {
+      add_to_queue(fn, format_file, NULL, st.st_size, passed_det);
+      ck_free(track_file);
+    }else {
+      add_to_queue(fn, format_file, track_file, st.st_size, passed_det);
+    }
   }
 
   free(nl); /* not tracked */

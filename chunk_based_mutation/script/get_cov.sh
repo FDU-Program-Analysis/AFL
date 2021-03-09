@@ -11,9 +11,9 @@
 # find . -name '*.gcda'|xargs gcov -a && \
 # find . -name '*.gcov'|xargs grep -v '$$$$$:' | grep -c '\-block'
 
-cd ~/ImageMagick-test && \
+cd /home/dp/Documents/fuzzing/chunk-afl-evaluation/lib-src/gcov-lib/jpeg-9d && \
 find . -name '*.gcda'|xargs rm -f && \
-~/Documents/pure/install/bin/identify -verbose ~/imagemagickoutput-hybrid-afl/afl-slave/queue/* && \
+find /home/dp/Documents/fuzzing/chunk-afl-evaluation/afl/jpeg/output/afl-jpeg-no-dict-slave/queue -name "id:*" -exec /home/dp/Documents/install/fuzzing/chunk-afl-evaluation/gcov-install/bin/djpeg {} \; && \
 find . -name '*.gcda'|xargs gcov -a && \
 find . -name '*.gcov'|xargs grep -v '$$$$$:' | grep -c '\-block'
 

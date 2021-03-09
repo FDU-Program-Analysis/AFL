@@ -37,6 +37,8 @@
 #include "debug.h"
 #include "hash.h"
 #include "types.h"
+#include "chunk.h"
+#include "hashMap.h"
 
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__)
 #include <sys/sysctl.h>
@@ -222,6 +224,9 @@ struct queue_entry {
   u8* format_file;   /* Format file name of the test case*/
   u32 format_len;    /* Format file length               */
 
+  u8* track_file;   /* Track file name of the test case */
+  u32 track_len;    /* Track file length                */
+
   u8 cal_failed,    /* Calibration failed?              */
       trim_done,    /* Trimmed?                         */
       was_fuzzed,   /* Had any fuzzing done yet?        */
@@ -350,7 +355,7 @@ void write_bitmap(void);
 void init_count_class16(void);
 u8  has_new_bits(u8* virgin_map);
 void update_bitmap_score(struct queue_entry *q);
-u8   save_if_interesting(char** argv, void* mem, u32 len, u8 fault, cJSON* json);
+u8   save_if_interesting(char** argv, void* mem, u32 len, u8 fault, Chunk* tree, Track *track);
 u32  calculate_score(struct queue_entry *q);
 #ifdef __x86_64__
 void classify_counts(u64 *mem);
@@ -375,7 +380,7 @@ void mark_as_det_done(struct queue_entry *q);
 void mark_as_variable(struct queue_entry *q);
 void mark_as_redundant(struct queue_entry* q, u8 state);
 void cull_queue(void);
-void add_to_queue(u8* fname, u8* format_file, u32 len, u8 passed_det);
+void add_to_queue(u8* fname, u8* format_file, u8* track_file, u32 len, u8 passed_det);
 void destroy_queue(void);
 void sync_fuzzers(char** argv);
 
@@ -402,7 +407,7 @@ u32 UR(u32 limit);
 void perform_dry_run();
 void init_forkserver(char** argv);
 u8   run_target(char** argv, u32 timeout);
-u8   common_fuzz_stuff(char** argv, u8* out_buf, u32 len, cJSON* json);
+u8   common_fuzz_stuff(char** argv, u8* out_buf, u32 len, Chunk* tree);
 
 /* pre_fuzz.c */
 
@@ -415,6 +420,9 @@ u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 cJSON* parse_json(const u8* format_file);
 void delete_block(cJSON* cjson_head, uint32_t delete_from,
                          uint32_t delete_len);
+cJSON* tree_to_json(Chunk* chunk_head);
+Chunk *json_to_tree(cJSON* json_head);
+void free_tree(Chunk *tree, Boolean recurse);
 u8 fuzz_one();
 
 /* signals.c */

@@ -4,46 +4,43 @@ import time
 
 def get_all_inputs():
     list = []
-    for root, dirs, files in os.walk("/home/dp/fuzzing/chunk-afl-evaluation/imagemagickoutput/afl-slave/queue"):
+    for root, dirs, files in os.walk("/home/dp/Documents/fuzzing/chunk-afl-evaluation/imagemagickoutput/chunk-afl-slave/queue"):
         for filename in files:
             list.append(os.path.join(root, filename))
 
-    for root, dirs, files in os.walk("/home/dp/fuzzing/chunk-afl-evaluation/imagemagickoutput/afl-slave/hangs"):
+    for root, dirs, files in os.walk("/home/dp/Documents/fuzzing/chunk-afl-evaluation/imagemagickoutput/chunk-afl-slave/hangs"):
         for filename in files:
             list.append(os.path.join(root, filename))
 
-    for root, dirs, files in os.walk("/home/dp/fuzzing/chunk-afl-evaluation/imagemagickoutput/afl-master/queue"):
+    for root, dirs, files in os.walk("/home/dp/Documents/fuzzing/chunk-afl-evaluation/imagemagickoutput/chunk-afl-master/queue"):
         for filename in files:
             list.append(os.path.join(root, filename))
 
-    for root, dirs, files in os.walk("/home/dp/fuzzing/chunk-afl-evaluation/imagemagickoutput/afl-master/hangs"):
+    for root, dirs, files in os.walk("/home/dp/Documents/fuzzing/chunk-afl-evaluation/imagemagickoutput/chunk-afl-master/hangs"):
         for filename in files:
             list.append(os.path.join(root, filename))
     return list
 
 
 basetime = os.path.getmtime(
-    "/home/dp/fuzzing/chunk-afl-evaluation/imagemagickoutput/afl-master/queue/id:000005,src:000000,op:flip1,pos:0,+cov")
+    "/home/dp/Documents/fuzzing/chunk-afl-evaluation/imagemagickoutput/chunk-afl-master/queue/id:000005,src:000000,op:flip1,pos:0,+cov")
 
 input_list = get_all_inputs()
 dict = {}
-os.chdir("/home/dp/fuzzing/chunk-afl-evaluation/libsrc/chunk-afl")
-os.system("find . -name '*.gcda'|xargs rm -f")
+os.chdir("/home/dp/Documents/fuzzing/chunk-afl-evaluation/lib-src/chunk-afl-lib")
 index = 0
 for input in input_list:
-    index += 1
-    if index == 10:
-        break
+    os.system("find . -name '*.gcda'|xargs rm -f")
     if (input.split(".")[-1] == "json"):
         continue
-    os.system("/home/dp/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/identify -verbose " + input)
+    os.system("timeout 20s /home/dp/Documents/install/fuzzing/chunk-afl-evaluation/chunk-afl-install/bin/identify -verbose " + input)
     
-    os.system("lcov -c -o coverage.info -d .")
-    file = open("coverage.info", "r")
+    os.system("lcov -c -o coverage-temp.info -d .")
+    file = open("coverage-temp.info", "r")
     line = file.readline()
     cur_file = ""
     filetime = os.path.getmtime(input)
-    m, s = divmod(filetime - basetime, 60)
+    time = filetime - basetime
     while line:
         parts = line.strip().split(":")
         if(parts[0] == "SF"):
@@ -54,14 +51,15 @@ for input in input_list:
             parts = parts[1].split(",")
             if(parts[1] != "0"):
                 if not parts[0] in dict[cur_file]:
-                    dict[cur_file][parts[0]] = int(m)
+                    dict[cur_file][parts[0]] = int(time)
                 else:
-                    if(dict[cur_file][parts[0]] > int(m)):
-                        dict[cur_file][parts[0]] = int(m)
+                    if(dict[cur_file][parts[0]] > int(time)):
+                        dict[cur_file][parts[0]] = int(time)
         line = file.readline()
     file.close()
+    os.remove("coverage-temp.info")
 
-os.chdir("/home/dp/fuzzing/chunk-afl-evaluation/coverage")
+os.chdir("/home/dp/Documents/fuzzing/chunk-afl-evaluation/coverage")
 cov_files_list = list(dict.keys())
 cov_files = open("chunk-afl","w+")
 cov_files_list.sort()

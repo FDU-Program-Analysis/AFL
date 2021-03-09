@@ -1,0 +1,39 @@
+djpeg,1
+pngpixel,1
+ffmpeg,4
+opj_decompress,2
+wavpack,1
+
+djpeg,1
+pngpixel,2
+ffmpeg,4
+opj_decompress,5
+wavpack,2
+
+djpeg,1
+pngpixel,1
+ffmpeg,4
+opj_decompress,2
+wavpack,1
+
+djpeg,1
+pngpixel,1
+ffmpeg,3
+opj_decompress,1
+wavpack,1
+
+djpeg,1
+pngpixel,1
+ffmpeg,4
+opj_decompress,2
+wavpack,2
+
+djpeg, 1
+pngpixel, 1.2
+ffmpeg, 3.8
+opj_decompress, 2.4
+wavpack, 1.4djpeg,12
+pngpixel,7
+ffmpeg,43
+opj_decompress,5
+wavpack,3

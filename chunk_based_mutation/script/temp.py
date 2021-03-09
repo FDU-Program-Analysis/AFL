@@ -1,0 +1,6 @@
+jasper_l3, = plt.plot(chunk_jasper_time_2h, chunk_jasper_inputs_2h, color='red', label='ChunkFuzzer')
+jasper_l1, = plt.plot(afl_jasper_time_2h, afl_jasper_inputs_2h, color="blue", label='AFL')
+jasper_l2, = plt.plot(afl_jasper_dict_time_2h, afl_jasper_dict_inputs_2h, color="green", label='AFL-dict')
+jasper_l4, = plt.plot(fast_jasper_time_2h, fast_jasper_inputs_2h, color="gray", label='AFLFast')
+jasper_l5, = plt.plot(plus_jasper_time_2h, plus_jasper_inputs_2h, color='purple', label='AFL++')
+plt.title("jasper")

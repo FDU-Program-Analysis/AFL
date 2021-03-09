@@ -468,13 +468,16 @@ static void write_crash_readme(void) {
    save or queue the input test case for further analysis if so. Returns 1 if
    entry is saved, 0 otherwise. */
 
-u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault, cJSON* json) {
+u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault, Chunk* tree, Track *track) {
   u8* fn = "";
   u8* format_file = "";
   u8* format_mem;
+  u8* track_file = "";
+  // u8* track_mem;
   u8 hnb;
   s32 fd;
   u8 keeping = 0, res;
+  cJSON* json;
 
   if (fault == crash_mode) {
     /* Keep only if there are new bits in the map, add to queue for
@@ -501,7 +504,13 @@ u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault, cJSON* json) {
 #endif /* ^!SIMPLE_FILES */
 
     format_file = alloc_printf("%s.json", fn);
-    add_to_queue(fn, format_file, len, 0);
+    track_file = alloc_printf("%s.track", fn);
+    if (track != NULL) {
+      add_to_queue(fn, format_file, track_file, len, 0);
+    } else {
+      add_to_queue(fn, format_file, NULL, len, 0);
+      ck_free(track_file);
+    }
 
     if (hnb == 2) {
       queue_top->has_new_cov = 1;
@@ -522,12 +531,17 @@ u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault, cJSON* json) {
     ck_write(fd, mem, len, fn);
     close(fd);
 
+    json = tree_to_json(tree);
     format_mem = cJSON_Print(json);
+    cJSON_Delete(json);
     fd = open(format_file, O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (fd < 0) PFATAL("Unable to create '%s'", format_file);
     ck_write(fd, format_mem, strlen(format_mem), format_file);
     close(fd);
     free(format_mem);
+
+
+
     keeping = 1;
   }
 
@@ -652,8 +666,6 @@ u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault, cJSON* json) {
 
   return keeping;
 }
-
-
 /* Calculate case desirability score to adjust the length of havoc fuzzing.
    A helper function for fuzz_one(). Maybe some of these constants should
    go into config.h. */

@@ -1,0 +1,65 @@
+{
+    "SIGNATURE": {
+        "start": 0,
+        "end": 8,
+        "id": {
+            "start": 0,
+            "end": 8,
+            "name": "ISGNATURE"
+        }
+    },
+    "IDHR": {
+        "start": 8,
+        "end": 33,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "IDHR"
+        }
+    },
+    "gAMA": {
+        "start": 33,
+        "end": 49,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "gAMA"
+        }
+    },
+    "PLTE": {
+        "start": 49,
+        "end": 76,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "PLTE"
+        }
+    },
+    "tEXt": {
+        "start": 76,
+        "end": 113,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "tEXt"
+        }
+    },
+    "IDAT": {
+        "start": 113,
+        "end": 216,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "IDAT"
+        }
+    },
+    "IEND": {
+        "start": 216,
+        "end": 228,
+        "id": {
+            "start": 4,
+            "end": 8,
+            "name": "IEND"
+        }
+    }
+}

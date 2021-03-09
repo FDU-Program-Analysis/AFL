@@ -1,0 +1,169 @@
+{
+    "00": {
+        "start": 0,
+        "end": 8,
+        "type": "Enum"
+    },
+    "01": {
+        "start": 8,
+        "end": 202,
+        "type": "Other",
+        "son": {
+            "01_00": {
+                "start": 8,
+                "end": 33,
+                "type": "Other",
+                "01_00_00": {
+                    "start": 8,
+                    "end": 12,
+                    "type": "Length"
+                },
+                "01_00_01": {
+                    "start": 12,
+                    "end": 16,
+                    "type": "Enum"
+                },
+                "01_00_02": {
+                    "start": 16,
+                    "end": 20,
+                    "type": "Other"
+                },
+                "01_00_03": {
+                    "start": 20,
+                    "end": 24,
+                    "type": "Other"
+                },
+                "01_00_04": {
+                    "start": 24,
+                    "end": 25,
+                    "type": "Other"
+                },
+                "01_00_05": {
+                    "start": 25,
+                    "end": 26,
+                    "type": "Other"
+                },
+                "01_00_06": {
+                    "start": 26,
+                    "end": 27,
+                    "type": "Other"
+                },
+                "01_00_07": {
+                    "start": 27,
+                    "end": 28,
+                    "type": "Other"
+                },
+                "01_00_08": {
+                    "start": 28,
+                    "end": 29,
+                    "type": "Other"
+                },
+                "01_00_09": {
+                    "start": 29,
+                    "end": 33,
+                    "type": "Checksum"
+                }
+            },
+            "01_01": {
+                "start": 33,
+                "end": 70,
+                "type": "Other",
+                "01_01_00": {
+                    "start": 33,
+                    "end": 37,
+                    "type": "Length"
+                },
+                "01_01_01": {
+                    "start": 37,
+                    "end": 41,
+                    "type": "Enum"
+                },
+                "01_01_02": {
+                    "start": 41,
+                    "end": 50,
+                    "type": "Other"
+                },
+                "01_01_03": {
+                    "start": 50,
+                    "end": 66,
+                    "type": "Other"
+                },
+                "01_01_04": {
+                    "start": 66,
+                    "end": 70,
+                    "type": "Checksum"
+                }
+            },
+            "01_02": {
+                "start": 70,
+                "end": 97,
+                "type": "Other",
+                "01_02_00": {
+                    "start": 70,
+                    "end": 74,
+                    "type": "Length"
+                },
+                "01_02_01": {
+                    "start": 74,
+                    "end": 78,
+                    "type": "Enum"
+                },
+                "01_03_02": {
+                    "start": 78,
+                    "end": 93,
+                    "type": "Other"
+                },
+                "01_04_03": {
+                    "start": 93,
+                    "end": 97,
+                    "type": "Checksum"
+                }
+            },
+            "01_03": {
+                "start": 97,
+                "end": 202,
+                "type": "Other",
+                "01_03_00": {
+                    "start": 97,
+                    "end": 101,
+                    "type": "Length"
+                },
+                "01_02_01": {
+                    "start": 101,
+                    "end": 105,
+                    "type": "Enum"
+                },
+                "01_03_02": {
+                    "start": 105,
+                    "end": 202,
+                    "type": "Other"
+                }
+            }
+        }
+    },
+    "02": {
+        "start": 202,
+        "end": 206,
+        "type": "Checksum"
+    },
+    "03": {
+        "start": 206,
+        "end": 218,
+        "type": "Other",
+        "03_00": {
+            "start": 206,
+            "end": 210,
+            "type": "Length"
+        },
+        "03_01": {
+            "start": 210,
+            "end": 214,
+            "type": "Enum"
+        },
+        "03_02": {
+            "start": 214,
+            "end": 218,
+            "type": "Checksum"
+        }
+    }
+}
