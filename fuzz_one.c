@@ -357,7 +357,7 @@ void tree_add_map(Chunk *head, HashMap map) {
   Chunk *iter = head;
   while (iter != NULL) {
     map->put(map, iter->id, iter);
-    if (iter->son) {
+    if (iter->son != NULL) {
       tree_add_map(iter->son, map);
     }
     iter = iter->next;
@@ -767,7 +767,7 @@ void chunk_detach(Chunk *head, Chunk *item) {
   Chunk *father, *temp;
   father = item->father;
   uint32_t delete_len = item->end - item->start;
-  while (father) {
+  while (father != NULL) {
     temp = father->father;
     father->end -= delete_len;
     if (father->next) {
@@ -775,18 +775,18 @@ void chunk_detach(Chunk *head, Chunk *item) {
     }
     father = temp;
   }
-  if (item->next) {
+  if (item->next != NULL) {
     chunk_add_len(item->next, -delete_len);
   }
-  if (item->prev) {
-    if (item->next) {
+  if (item->prev != NULL) {
+    if (item->next != NULL) {
       item->prev->next = item->next;
       item->next->prev = item->prev;
     } else {
       item->prev->next = NULL;
     }
-  } else if (item->father) {
-    if (item->next) {
+  } else if (item->father != NULL) {
+    if (item->next != NULL) {
       item->father->son = item->next;
       item->next->prev = NULL;
     } else {
@@ -843,7 +843,7 @@ void set_id_add_map(Chunk *head, HashMap map) {
       iter->id = generate_id(iter->id);
     }
     map->put(map, iter->id, iter);
-    if (iter->son) {
+    if (iter->son != NULL) {
       set_id_add_map(iter->son, map);
     }
     iter = iter->next;
@@ -1123,7 +1123,12 @@ Chunk *find_chunk_include(Chunk *head, uint32_t num) {
 }
 
 void insert_block(Chunk *head, uint32_t insert_to, uint32_t insert_len) {
-  Chunk *item = find_chunk_include(head, insert_to);
+  Chunk *item;
+  if(insert_to == head->end) {
+    item = find_chunk_include(head, insert_to - 1);
+  }else {
+    item = find_chunk_include(head, insert_to);
+  }
   if (item == NULL) {
     return;
   }
@@ -1245,12 +1250,20 @@ void delete_block(Chunk *head, uint32_t delete_from, uint32_t delete_len) {
 }
 
 Chunk *splice_tree(Chunk *head1, Chunk *head2, uint32_t split_at) {
+  if(split_at == 0) {
+    free_tree(head1, True);
+    return head2;
+  }
+  if(split_at == head1->end) {
+    free_tree(head2, True);
+    return head1;
+  }
   Chunk *item1 = find_chunk_include(head1, split_at);
   Chunk *item2 = find_chunk_include(head2, split_at);
   Chunk *item1_root = item1;
   Chunk *item2_root = item2;
   Chunk *prev, *iter, *root, *temp;
-  while (item1_root->father) {
+  while (item1_root->father != NULL) {
     temp = item1_root->father;
     free_tree(item1_root->next, True);
     item1_root->next = NULL;
@@ -1265,9 +1278,9 @@ Chunk *splice_tree(Chunk *head1, Chunk *head2, uint32_t split_at) {
   item1_root->end =
       split_at - get_chunk_abs_start(item1_root) + item1_root->start;
 
-  while (item2_root->father) {
+  while (item2_root->father != NULL) {
     prev = item2_root->prev;
-    while (prev) {
+    while (prev != NULL) {
       iter = prev->prev;
       free_tree(prev, False);
       prev = iter;
@@ -1284,15 +1297,20 @@ Chunk *splice_tree(Chunk *head1, Chunk *head2, uint32_t split_at) {
   chunk_add_len(item2_root, item1_root->end);
   HashMap map = createHashMap(NULL, NULL);
   tree_add_map(item1_root, map);
-  root = malloc(sizeof(Chunk));
+  root = ck_alloc(sizeof(Chunk));
+  root->father = root->next = root->prev = root->son = NULL;
+  root->cons = NULL;
+  root->start = 0;
+  root->end = item2_root->end;
+  root->id = ck_alloc(strlen(item1_root->id) + 1);
+  strcpy(root->id, item1_root->id);
+  set_id_add_map(item2_root, map);
+  set_id_add_map(root, map);
   item1_root->next = item2_root;
   item2_root->prev = item1_root;
   root->son = item1_root;
-  root->father = root->next = root->prev = NULL;
-  root->start = 0;
-  root->end = item2_root->end;
-  root->id = "root";
-  set_id_add_map(item2_root, map);
+  item1_root->father = root;
+  item2_root->father = root;
   map->clear(map);
   free(map);
   return root;
@@ -1854,26 +1872,27 @@ exit_describing_aware_stage:
 Boolean check_tree(Chunk *head, HashMap map) {
   Chunk *iter;
   iter = head;
-  while (iter) {
+  while (iter != NULL) {
     if (map->exists(map, iter->id)) {
-      printf("duplicate id\n");
+      printf("iter->id = %s, duplicate id\n", iter->id);
       return False;
     }
     map->put(map, iter->id, iter);
     if (iter->start == iter->end) {
-      printf("iter->start == iter->end\n");
+      printf("iter->id = %s, iter->start == iter->end\n", iter->id);
       return False;
     }
-    if (iter->prev) {
+    if (iter->prev != NULL) {
       if (iter->start != iter->prev->end) {
-        printf("iter->start != iter->prev->end\n");
+        printf("iter->prev end = %d\n", iter->prev->end);
+        printf("iter->id = %s, iter->start != iter->prev->end\n", iter->id);
         return False;
       }
     } else if (iter->start != 0) {
-      printf("iter->start != 0\n");
+      printf("iter->id = %s, iter->start != 0\n", iter->id);
       return False;
     }
-    if (iter->father) {
+    if (iter->father != NULL) {
       if (get_chunk_abs_end(iter) > get_chunk_abs_end(iter->father)) {
         printf(
             "iter->id= %s, get_chunk_abs_end(iter) > "
@@ -1882,7 +1901,16 @@ Boolean check_tree(Chunk *head, HashMap map) {
         return False;
       }
     }
-    if (iter->son) {
+    if (iter->next == NULL && iter->father != NULL) {
+      if (get_chunk_abs_end(iter) != get_chunk_abs_end(iter->father)) {
+        printf(
+            "iter->id = %s, get_chunk_abs_end(iter) != "
+            "get_chunk_abs_end(iter->father)\n",
+            iter->id);
+        return False;
+      }
+    }
+    if (iter->son != NULL) {
       if (check_tree(iter->son, map) == False) {
         return False;
       }
@@ -1895,8 +1923,11 @@ Boolean check_tree(Chunk *head, HashMap map) {
 void check(Chunk *tree) {
   HashMap map = createHashMap(NULL, NULL);
   if (check_tree(tree, map) == False) {
-    PFATAL("check tree fail\n");
+    printf("%s\n", cJSON_Print(tree_to_json(tree)));
+    free(map);
+    exit(0);
   }
+  map->clear(map);
   free(map);
 }
 
@@ -1919,7 +1950,7 @@ u8 fuzz_one(char **argv) {
   Node *list, *list_itr, *list_temp;
   list = list_itr = list_temp = NULL;
 
-  Chunk *in_tree, *out_tree;
+  Chunk *in_tree, *out_tree, *orig_tree;
 
   Track *track;
   u32 start = 0, end = 0, field_len = 0;
@@ -2048,6 +2079,7 @@ u8 fuzz_one(char **argv) {
 
   memcpy(out_buf, in_buf, len);
   out_tree = chunk_duplicate(in_tree, True);
+  orig_tree = chunk_duplicate(in_tree, True);
   /*********************
    * PERFORMANCE SCORE *
    *********************/
@@ -3225,24 +3257,22 @@ havoc_stage:
           /* Delete bytes. We're making this a bit more likely
              than insertion (the next option) in hopes of keeping
              files reasonably small. */
-          // u32 del_from, del_len;
+          u32 del_from, del_len;
 
-          // if (temp_len < 2) break;
+          if (temp_len < 2) break;
 
-          // /* Don't delete too much. */
+          /* Don't delete too much. */
 
-          // del_len = choose_block_len(temp_len - 1);
+          del_len = choose_block_len(temp_len - 1);
 
-          // del_from = UR(temp_len - del_len + 1);
+          del_from = UR(temp_len - del_len + 1);
 
-          // memmove(out_buf + del_from, out_buf + del_from + del_len,
-          //         temp_len - del_from - del_len);
+          memmove(out_buf + del_from, out_buf + del_from + del_len,
+                  temp_len - del_from - del_len);
+          temp_len -= del_len;
 
-          // temp_len -= del_len;
-
-          // /* Update format file */
-          // delete_block(out_tree, del_from, del_len);
-
+          /* Update format file */
+          delete_block(out_tree, del_from, del_len);
           break;
         }
 
@@ -3251,45 +3281,45 @@ havoc_stage:
           if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
             /* Clone bytes (75%) or insert a block of constant bytes (25%). */
 
-            // u8 actually_clone = UR(4);
-            // u32 clone_from, clone_to, clone_len;
-            // u8 *new_buf;
+            u8 actually_clone = UR(4);
+            u32 clone_from, clone_to, clone_len;
+            u8 *new_buf;
 
-            // if (actually_clone) {
-            //   clone_len = choose_block_len(temp_len);
-            //   clone_from = UR(temp_len - clone_len + 1);
+            if (actually_clone) {
+              clone_len = choose_block_len(temp_len);
+              clone_from = UR(temp_len - clone_len + 1);
 
-            // } else {
-            //   clone_len = choose_block_len(HAVOC_BLK_XL);
-            //   clone_from = 0;
-            // }
+            } else {
+              clone_len = choose_block_len(HAVOC_BLK_XL);
+              clone_from = 0;
+            }
 
-            // clone_to = UR(temp_len);
+            clone_to = UR(temp_len);
 
-            // new_buf = ck_alloc_nozero(temp_len + clone_len);
+            new_buf = ck_alloc_nozero(temp_len + clone_len);
 
-            // /* Head */
+            /* Head */
 
-            // memcpy(new_buf, out_buf, clone_to);
+            memcpy(new_buf, out_buf, clone_to);
 
-            // /* Inserted part */
+            /* Inserted part */
 
-            // if (actually_clone)
-            //   memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
-            // else
-            //   memset(new_buf + clone_to,
-            //          UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
+            if (actually_clone)
+              memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
+            else
+              memset(new_buf + clone_to,
+                     UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
 
-            // /* Tail */
-            // memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
-            //        temp_len - clone_to);
+            /* Tail */
+            memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
+                   temp_len - clone_to);
 
-            // ck_free(out_buf);
-            // out_buf = new_buf;
-            // temp_len += clone_len;
+            ck_free(out_buf);
+            out_buf = new_buf;
+            temp_len += clone_len;
 
-            // /* Update format file */
-            // insert_block(out_tree, clone_from, clone_len);
+            /* Update format file */
+            insert_block(out_tree, clone_from, clone_len);
           }
 
           break;
@@ -3394,51 +3424,51 @@ havoc_stage:
         }
 
         case 20: {
-          // u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
-          // u8 *new_buf;
+          u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
+          u8 *new_buf;
 
           /* Insert an extra. Do the same dice-rolling stuff as for the
              previous case. */
 
-          // if (!extras_cnt || (a_extras_cnt && UR(2))) {
-          //   use_extra = UR(a_extras_cnt);
-          //   extra_len = a_extras[use_extra].len;
+          if (!extras_cnt || (a_extras_cnt && UR(2))) {
+            use_extra = UR(a_extras_cnt);
+            extra_len = a_extras[use_extra].len;
 
-          //   if (temp_len + extra_len >= MAX_FILE) break;
+            if (temp_len + extra_len >= MAX_FILE) break;
 
-          //   new_buf = ck_alloc_nozero(temp_len + extra_len);
+            new_buf = ck_alloc_nozero(temp_len + extra_len);
 
-          //   /* Head */
-          //   memcpy(new_buf, out_buf, insert_at);
+            /* Head */
+            memcpy(new_buf, out_buf, insert_at);
 
-          //   /* Inserted part */
-          //   memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
+            /* Inserted part */
+            memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
 
-          // } else {
-          //   use_extra = UR(extras_cnt);
-          //   extra_len = extras[use_extra].len;
+          } else {
+            use_extra = UR(extras_cnt);
+            extra_len = extras[use_extra].len;
 
-          //   if (temp_len + extra_len >= MAX_FILE) break;
+            if (temp_len + extra_len >= MAX_FILE) break;
 
-          //   new_buf = ck_alloc_nozero(temp_len + extra_len);
+            new_buf = ck_alloc_nozero(temp_len + extra_len);
 
-          //   /* Head */
-          //   memcpy(new_buf, out_buf, insert_at);
+            /* Head */
+            memcpy(new_buf, out_buf, insert_at);
 
-          //   /* Inserted part */
-          //   memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
-          // }
+            /* Inserted part */
+            memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
+          }
 
-          // /* Tail */
-          // memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
-          //        temp_len - insert_at);
+          /* Tail */
+          memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
+                 temp_len - insert_at);
 
-          // ck_free(out_buf);
-          // out_buf = new_buf;
-          // temp_len += extra_len;
+          ck_free(out_buf);
+          out_buf = new_buf;
+          temp_len += extra_len;
 
-          // /* Update format file */
-          // insert_block(out_tree, insert_at, extra_len);
+          /* Update format file */
+          insert_block(out_tree, insert_at, extra_len);
 
           break;
         }
@@ -3513,6 +3543,8 @@ retry_splicing:
       ck_free(in_buf);
       in_buf = orig_in;
       len = queue_cur->len;
+      free_tree(in_tree, True);
+      in_tree = chunk_duplicate(orig_tree,True);
     }
 
     /* Pick a random queue entry and seek to it. Don't splice with yourself. */
