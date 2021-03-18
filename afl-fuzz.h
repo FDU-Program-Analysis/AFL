@@ -407,19 +407,19 @@ u32 UR(u32 limit);
 void perform_dry_run();
 void init_forkserver(char** argv);
 u8   run_target(char** argv, u32 timeout);
-u8   common_fuzz_stuff(char** argv, u8* out_buf, u32 len, Chunk* tree);
+u8   common_fuzz_stuff(char** argv, u8* out_buf, u32 len, Chunk* tree, Track *track);
 
 /* pre_fuzz.c */
 
 u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf,
-                    cJSON* in_json);
+                    Chunk *tree);
 u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
                          u32 handicap, u8 from_queue);
 
 /* fuzz_one.c */
 cJSON* parse_json(const u8* format_file);
-void delete_block(cJSON* cjson_head, uint32_t delete_from,
-                         uint32_t delete_len);
+void delete_block(Chunk* head, uint32_t delete_from,
+                  uint32_t delete_len);
 cJSON* tree_to_json(Chunk* chunk_head);
 Chunk *json_to_tree(cJSON* json_head);
 void free_tree(Chunk *tree, Boolean recurse);

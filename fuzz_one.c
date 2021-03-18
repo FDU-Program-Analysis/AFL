@@ -1,10 +1,5 @@
 #include "afl-fuzz.h"
 
-#define CHUNK_ID_START(chunk) \
-  ((cJSON *)chunk)->child->next->next->child->valueint
-#define CHUNK_ID_END(chunk) \
-  ((cJSON *)chunk)->child->next->next->child->next->valueint
-
 /* Helper function to see if a particular change (xor_val = old ^ new) could
    be a product of deterministic bit flips with the lengths and stepovers
    attempted by afl-fuzz. This is used to avoid dupes in some of the
@@ -193,7 +188,7 @@ uint32_t get_chunk_abs_start(const Chunk *chunk) {
   uint32_t start = chunk->start;
   const Chunk *father;
   father = chunk->father;
-  while (father) {
+  while (father != NULL) {
     start += father->start;
     father = father->father;
   }
@@ -204,7 +199,7 @@ uint32_t get_chunk_abs_end(const Chunk *chunk) {
   uint32_t end = chunk->end;
   const Chunk *father;
   father = chunk->father;
-  while (father) {
+  while (father != NULL) {
     end += father->start;
     father = father->father;
   }
@@ -216,7 +211,7 @@ Node *get_node_list(Chunk *tree) {
   Node *head, *top;
   head = top = NULL;
   iter = tree;
-  while (iter) {
+  while (iter != NULL) {
     if (iter->son == NULL) {
       Node *node = ck_alloc(sizeof(Node));
       node->start = get_chunk_abs_start(iter);
@@ -233,7 +228,7 @@ Node *get_node_list(Chunk *tree) {
       } else {
         head = top = get_node_list(iter->son);
       }
-      while (top->next) {
+      while (top->next != NULL) {
         top = top->next;
       }
     }
@@ -244,32 +239,37 @@ Node *get_node_list(Chunk *tree) {
 
 void free_node_list(Node *head) {
   Node *item = NULL;
-  while (head) {
+  while (head != NULL) {
     item = head->next;
     ck_free(head);
     head = item;
   }
 }
 
-void generate_id(char *random_str) {
-  int i, random_num, seed_str_len, len;
+uint8_t *generate_id(char *str) {
+  int i, UR, seed_str_len, len;
   struct timeval tv;
   unsigned int seed_num;
+  char *random_str;
   char seed_str[] =
       "abcdefghijklmnopqrstuvwxyz"
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-<>[]{}=*&^#:";
+  len = 16;
   seed_str_len = strlen(seed_str);
 
   gettimeofday(&tv, NULL);
   seed_num = (unsigned int)(tv.tv_sec + tv.tv_usec);
   srand(seed_num);
 
-  len = strlen(random_str);
-  for (i = 0; i < len; i++) {
-    random_num = rand() % seed_str_len;
-    random_str[i] = seed_str[random_num];
+  ck_free(str);
+  random_str = ck_alloc(len);
+  // len = strlen(random_str);
+  for (i = 0; i < len - 1; i++) {
+    UR = rand() % seed_str_len;
+    random_str[i] = seed_str[UR];
   }
+  random_str[len - 1] = '\0';
+  return random_str;
 }
 
 Chunk *json_to_tree(cJSON *cjson_head) {
@@ -303,7 +303,7 @@ Chunk *json_to_tree(cJSON *cjson_head) {
     if (cJSON_HasObjectItem(chunk, "son")) {
       top->son = json_to_tree(cJSON_GetObjectItemCaseSensitive(chunk, "son"));
       iter = top->son;
-      while (iter) {
+      while (iter != NULL) {
         iter->father = top;
         iter = iter->next;
       }
@@ -321,13 +321,14 @@ Chunk *get_tree(cJSON *cjson_head) {
     root->son = head;
     root->start = head->start;
     iter = head;
-    while (iter) {
+    while (iter != NULL) {
       iter->father = root;
       end = iter->end;
       iter = iter->next;
     }
     root->end = end;
     root->id = "root";
+    root->cons = NULL;
   } else {
     root = head;
   }
@@ -339,11 +340,11 @@ cJSON *tree_to_json(Chunk *chunk_head) {
   iter = chunk_head;
   cJSON *json_head;
   json_head = cJSON_CreateObject();
-  while (iter) {
+  while (iter != NULL) {
     cJSON *cjson = cJSON_CreateObject();
     cJSON_AddNumberToObject(cjson, "start", iter->start);
     cJSON_AddNumberToObject(cjson, "end", iter->end);
-    if (iter->son) {
+    if (iter->son != NULL) {
       cJSON_AddItemToObject(cjson, "son", tree_to_json(iter->son));
     }
     cJSON_AddItemToObject(json_head, iter->id, cjson);
@@ -354,7 +355,7 @@ cJSON *tree_to_json(Chunk *chunk_head) {
 
 void tree_add_map(Chunk *head, HashMap map) {
   Chunk *iter = head;
-  while (iter) {
+  while (iter != NULL) {
     map->put(map, iter->id, iter);
     if (iter->son) {
       tree_add_map(iter->son, map);
@@ -364,8 +365,11 @@ void tree_add_map(Chunk *head, HashMap map) {
 }
 
 void free_tree(Chunk *head, Boolean recurse) {
+  if(head == NULL) {
+    return;
+  }
   Chunk *iter = NULL;
-  while (head) {
+  while (head != NULL) {
     if (recurse) {
       iter = head->next;
     } else {
@@ -373,12 +377,66 @@ void free_tree(Chunk *head, Boolean recurse) {
     }
     ck_free(head->id);
     head->id = NULL;
+    if (head->cons != NULL) {
+      ck_free(head->cons);
+    }
     if (head->son) {
       free_tree(head->son, True);
     }
     ck_free(head);
     head = iter;
   }
+}
+
+uint32_t htoi(uint8_t s[]) {
+  uint32_t i;
+  uint32_t n = 0;
+  if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+    i = 2;
+  } else {
+    i = 0;
+  }
+  for (; (s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'z') ||
+         (s[i] >= 'A' && s[i] <= 'Z');
+       ++i) {
+    if (tolower(s[i]) > '9') {
+      n = 16 * n + (10 + tolower(s[i]) - 'a');
+    } else {
+      n = 16 * n + (tolower(s[i]) - '0');
+    }
+  }
+  return n;
+}
+
+uint8_t *str_reverse(char *str) {
+  uint32_t n = strlen(str) / 2;
+  uint32_t i = 0;
+  uint8_t tmp = 0;
+  for (i = 0; i < n; i++) {
+    tmp = str[i];
+    str[i] = str[strlen(str) - i - 1];
+    str[strlen(str) - i - 1] = tmp;
+  }
+  return str;
+}
+
+uint8_t *parse_candidate(uint8_t *str) {
+  uint8_t *delim, *part, *candi, c, buffer[1024];
+  uint32_t num, i;
+  delim = "[], ";
+  part = strtok(str, delim);
+  i = 0;
+  while (part != NULL) {
+    num = htoi(part);
+    c = num;
+    buffer[i] = c;
+    i++;
+    part = strtok(NULL, delim);
+  }
+  candi = ck_alloc(i);
+  memcpy(candi, buffer, i);
+  ck_free(str);
+  return candi;
 }
 
 Track *parse_track_file(uint8_t *path) {
@@ -392,7 +450,11 @@ Track *parse_track_file(uint8_t *path) {
   Length *length_top = NULL;
   Constraint *cons_top = NULL;
   track = ck_alloc(sizeof(struct Track));
-  delim = "(),{} ";
+  track->constraints = NULL;
+  track->lengths = NULL;
+  track->offsets = NULL;
+  track->enums = NULL;
+  delim = "();{}";
   if ((fp = fopen(path, "r")) == NULL) {
     PFATAL("Unable to access %s\n", path);
   }
@@ -407,13 +469,15 @@ Track *parse_track_file(uint8_t *path) {
     if (strcmp(type, "Enum") == 0) {
       uint8_t *candidate;
       num = atoi(strtok(NULL, delim));
-      Enum *enum_chunk = ck_alloc(sizeof(struct Enum) + num * sizeof(uint8_t *));
+      Enum *enum_chunk =
+          ck_alloc(sizeof(struct Enum) + num * 2 * sizeof(uint8_t *));
       enum_chunk->id = (uint8_t *)ck_alloc(strlen(id1) + 1);
       strcpy(enum_chunk->id, id1);
-      enum_chunk->cans_num = num;
+      enum_chunk->cans_num = num * 2;
+      enum_chunk->next = NULL;
       for (i = 0; i < num; i++) {
         candidate = strtok(NULL, delim);
-        enum_chunk->candidates[i] = ck_alloc(sizeof(candidate) + 1);
+        enum_chunk->candidates[i] = ck_alloc(strlen(candidate) + 1);
         strcpy(enum_chunk->candidates[i], candidate);
       }
       if (enum_top) {
@@ -429,6 +493,7 @@ Track *parse_track_file(uint8_t *path) {
       len_chunk->id2 = (uint8_t *)ck_alloc(strlen(id2) + 1);
       strcpy(len_chunk->id1, id1);
       strcpy(len_chunk->id2, id2);
+      len_chunk->next = NULL;
       if (length_top) {
         length_top->next = len_chunk;
         length_top = len_chunk;
@@ -443,6 +508,7 @@ Track *parse_track_file(uint8_t *path) {
       offset_chunk->id2 = (uint8_t *)ck_alloc(strlen(id2) + 1);
       strcpy(offset_chunk->id2, id2);
       offset_chunk->abs = num;
+      offset_chunk->next = NULL;
       if (offset_top) {
         offset_top->next = offset_chunk;
         offset_top = offset_chunk;
@@ -457,6 +523,7 @@ Track *parse_track_file(uint8_t *path) {
       strcpy(cons_chunk->id1, id1);
       strcpy(cons_chunk->id2, id2);
       cons_chunk->type = num;
+      cons_chunk->next = NULL;
       if (cons_top) {
         cons_top->next = cons_chunk;
         cons_top = cons_chunk;
@@ -465,11 +532,20 @@ Track *parse_track_file(uint8_t *path) {
       }
     }
   }
+  enum_top = track->enums;
+  while (enum_top != NULL) {
+    num = enum_top->cans_num / 2;
+    for (i = 0; i < num; i++) {
+      enum_top->candidates[i] = parse_candidate(enum_top->candidates[i]);
+      enum_top->candidates[i + num] =
+          ck_alloc(strlen(enum_top->candidates[i]) + 1);
+      strcpy(enum_top->candidates[i + num], enum_top->candidates[i]);
+      enum_top->candidates[i + num] =
+          str_reverse(enum_top->candidates[i + num]);
+    }
+    enum_top = enum_top->next;
+  }
   fclose(fp);
-  cons_top->next = NULL;
-  offset_top->next = NULL;
-  length_top->next = NULL;
-  enum_top->next = NULL;
   return track;
 }
 
@@ -506,25 +582,25 @@ void free_track(Track *track) {
   Length *len_next = NULL;
   Offset *offset_next = NULL;
 
-  while (track->offsets) {
+  while (track->offsets != NULL) {
     offset_next = track->offsets->next;
     free_offset(track->offsets);
     track->offsets = offset_next;
   }
 
-  while (track->enums) {
+  while (track->enums != NULL) {
     enum_next = track->enums->next;
     free_enum(track->enums);
     track->enums = enum_next;
   }
 
-  while (track->constraints) {
+  while (track->constraints != NULL) {
     cons_next = track->constraints->next;
     free_constraint(track->constraints);
     track->constraints = cons_next;
   }
 
-  while (track->lengths) {
+  while (track->lengths != NULL) {
     len_next = track->lengths->next;
     free_length(track->lengths);
     track->lengths = len_next;
@@ -613,7 +689,7 @@ cJSON *parse_json(const u8 *format_file) {
 Chunk *find_chunk(uint8_t *id, Chunk *head) {
   Chunk *iter, *result;
   iter = head;
-  while (iter) {
+  while (iter != NULL) {
     if (strcmp(id, iter->id) == 0) {
       return iter;
     }
@@ -628,9 +704,21 @@ Chunk *find_chunk(uint8_t *id, Chunk *head) {
   return NULL;
 }
 
+uint8_t is_inner_chunk(Chunk *father, Chunk *son) {
+  Chunk *iter;
+  iter = son->father;
+  while (iter != NULL) {
+    if (strcmp(father->id, iter->id) == 0) {
+      return 1;
+    }
+    iter = iter->father;
+  }
+  return 0;
+}
+
 void chunk_add_len(Chunk *head, int32_t len) {
   Chunk *iter = head;
-  while (iter) {
+  while (iter != NULL) {
     iter->start += len;
     iter->end += len;
     iter = iter->next;
@@ -641,7 +729,7 @@ Chunk *chunk_duplicate(Chunk *head, Boolean recurse) {
   Chunk *dup_head, *top, *iter, *temp;
   dup_head = top = temp = NULL;
   iter = head;
-  while (iter) {
+  while (iter != NULL) {
     Chunk *node = ck_alloc(sizeof(Chunk));
     node->start = iter->start;
     node->end = iter->end;
@@ -661,7 +749,7 @@ Chunk *chunk_duplicate(Chunk *head, Boolean recurse) {
     if (iter->son) {
       top->son = chunk_duplicate(iter->son, True);
       temp = top->son;
-      while (temp) {
+      while (temp != NULL) {
         temp->father = top;
         temp = temp->next;
       }
@@ -676,15 +764,16 @@ Chunk *chunk_duplicate(Chunk *head, Boolean recurse) {
 }
 
 void chunk_detach(Chunk *head, Chunk *item) {
-  Chunk *father;
+  Chunk *father, *temp;
   father = item->father;
   uint32_t delete_len = item->end - item->start;
   while (father) {
+    temp = father->father;
     father->end -= delete_len;
     if (father->next) {
       chunk_add_len(father->next, -delete_len);
     }
-    father = father->father;
+    father = temp;
   }
   if (item->next) {
     chunk_add_len(item->next, -delete_len);
@@ -711,7 +800,7 @@ void chunk_insert(Chunk *item, Chunk *insert) {
   len = insert->end - insert->start;
   chunk_add_len(insert, item->end - insert->start);
   Chunk *father = item->father;
-  while (father) {
+  while (father != NULL) {
     father->end += len;
     if (father->next) {
       chunk_add_len(father->next, len);
@@ -749,9 +838,9 @@ uint8_t *copy_and_insert(uint8_t *buf, uint32_t *len, uint32_t insert_at,
 
 void set_id_add_map(Chunk *head, HashMap map) {
   Chunk *iter = head;
-  while (iter) {
+  while (iter != NULL) {
     while (map->exists(map, iter->id)) {
-      generate_id(iter->id);
+      iter->id = generate_id(iter->id);
     }
     map->put(map, iter->id, iter);
     if (iter->son) {
@@ -761,14 +850,18 @@ void set_id_add_map(Chunk *head, HashMap map) {
   }
 }
 
-void delete_from_map(Chunk *head, HashMap map) {
+void delete_from_map(Chunk *head, HashMap map, Boolean recurse) {
   Chunk *iter = head;
-  while (iter) {
+  while (iter != NULL) {
     map->remove(map, iter->id);
     if (iter->son) {
-      delete_from_map(iter->son, map);
+      delete_from_map(iter->son, map, True);
     }
-    iter = iter->next;
+    if (recurse) {
+      iter = iter->next;
+    } else {
+      iter = NULL;
+    }
   }
 }
 
@@ -835,17 +928,26 @@ uint8_t *delete_data(uint8_t *buf, uint32_t *len, uint32_t delete_start,
 uint8_t *delete_chunk(uint8_t *buf, uint32_t *len, HashMap map, Chunk *head,
                       uint8_t *id) {
   Chunk *chunk_delete = find_chunk(id, head);
+  Chunk *father;
   if (chunk_delete == NULL) {
     return buf;
   }
   uint32_t delete_start = get_chunk_abs_start(chunk_delete);
   uint32_t delete_len = chunk_delete->end - chunk_delete->start;
-  if (delete_start + delete_len >= *len) {
+  if (delete_len >= *len) {
     return buf;
   }
   chunk_detach(head, chunk_delete);
-  delete_from_map(chunk_delete, map);
+  delete_from_map(chunk_delete, map, False);
+  father = chunk_delete->father;
   free_tree(chunk_delete, False);
+  while (father != NULL && father->start == father->end) {
+    chunk_delete = father->father;
+    chunk_detach(head, father);
+    delete_from_map(father, map, False);
+    free_tree(father, False);
+    father = chunk_delete;
+  }
   return delete_data(buf, len, delete_start, delete_len);
 }
 
@@ -904,25 +1006,15 @@ Chunk *swap_chunks(Chunk *head, Chunk *left, Chunk *right) {
   return head;
 }
 
-uint32_t random_num(uint32_t rand_max) {
-  struct timeval tv;
-  unsigned int seed_num;
-
-  gettimeofday(&tv, NULL);
-  seed_num = (unsigned int)(tv.tv_sec + tv.tv_usec);
-  srand(seed_num);
-  return rand() % rand_max;
-}
-
 Chunk *random_chunk(Chunk *head) {
   Chunk *reserve, *iter;
-  reserve = NULL;
   uint32_t count, rand;
+  reserve = NULL;
   iter = head;
   count = 0;
-  while (iter) {
+  while (iter != NULL) {
     count += 1;
-    rand = random_num(count) + 1;
+    rand = UR(count) + 1;
     if (rand == count) {
       reserve = iter;
     }
@@ -940,12 +1032,15 @@ uint8_t *exchange_chunk(uint8_t *buf, uint32_t len, Chunk *head, uint8_t *id1) {
   if (chunk_left == NULL) {
     return buf;
   }
+  if (chunk_left->father == NULL) {
+    return buf;
+  }
   chunk_left = random_chunk(chunk_left->father->son);
   chunk_right = random_chunk(chunk_left->father->son);
   if (strcmp(chunk_left->id, chunk_right->id) == 0) {
     return buf;
   }
-  if (get_chunk_abs_start(chunk_left) > get_chunk_abs_start(chunk_right)) {
+  if (get_chunk_abs_end(chunk_left) >= get_chunk_abs_end(chunk_right)) {
     temp = chunk_left;
     chunk_left = chunk_right;
     chunk_right = temp;
@@ -997,13 +1092,26 @@ void number_add(uint8_t *buf, Chunk *chunk, int32_t num) {
   }
 }
 
+void number_set(uint8_t *buf, Chunk *chunk, int32_t num) {
+  uint32_t chunk_start, chunk_len;
+  chunk_start = get_chunk_abs_start(chunk);
+  chunk_len = chunk->end - chunk->start;
+  if (chunk_len == 1) {
+    *(uint8_t *)(buf + chunk_start) = num;
+  } else if (chunk_len == 2) {
+    *(uint16_t *)(buf + chunk_start) = num;
+  } else if (chunk_len == 4) {
+    *(uint32_t *)(buf + chunk_start) = num;
+  }
+}
+
 Chunk *find_chunk_include(Chunk *head, uint32_t num) {
   Chunk *iter;
   iter = head;
-  while (iter) {
-    if (iter->end <= num) {
+  while (iter != NULL) {
+    if (get_chunk_abs_end(iter) <= num) {
       iter = iter->next;
-    } else if (iter->start > num) {
+    } else if (get_chunk_abs_start(iter) > num) {
       return NULL;
     } else if (iter->son) {
       return find_chunk_include(iter->son, num);
@@ -1019,8 +1127,9 @@ void insert_block(Chunk *head, uint32_t insert_to, uint32_t insert_len) {
   if (item == NULL) {
     return;
   }
+  item->end += insert_len;
   Chunk *father = item->father;
-  while (father) {
+  while (father != NULL) {
     father->end += insert_len;
     if (father->next) {
       chunk_add_len(father->next, insert_len);
@@ -1032,18 +1141,126 @@ void insert_block(Chunk *head, uint32_t insert_to, uint32_t insert_len) {
   }
 }
 
+void delete_son_block(Chunk *head, uint32_t delete_from, uint32_t delete_len) {
+  Chunk *start_chunk, *end_chunk, *iter, *temp;
+  start_chunk = head->son;
+  if (start_chunk == NULL) {
+    return;
+  }
+  while (start_chunk != NULL) {
+    if (!((get_chunk_abs_start(start_chunk) <= delete_from) &&
+          (get_chunk_abs_end(start_chunk) > delete_from))) {
+      start_chunk = start_chunk->next;
+    } else {
+      break;
+    }
+  }
+  if (start_chunk == NULL) {
+    return;
+  }
+  end_chunk = start_chunk;
+  while (end_chunk != NULL) {
+    if (get_chunk_abs_end(end_chunk) < delete_from + delete_len) {
+      end_chunk = end_chunk->next;
+    } else {
+      break;
+    }
+  }
+  if (start_chunk == end_chunk) {
+    delete_son_block(start_chunk, delete_from, delete_len);
+    start_chunk->end -= delete_len;
+    if (start_chunk->next) {
+      chunk_add_len(start_chunk->next, -delete_len);
+    }
+    if (start_chunk->start == start_chunk->end) {
+      chunk_detach(head, start_chunk);
+    }
+  } else {
+    delete_son_block(start_chunk, delete_from,
+                     get_chunk_abs_end(start_chunk) - delete_from);
+    delete_son_block(end_chunk, get_chunk_abs_start(end_chunk),
+                     delete_from + delete_len - get_chunk_abs_start(end_chunk));
+    iter = start_chunk->next;
+    while (iter != NULL && iter != end_chunk) {
+      temp = iter->next;
+      free_tree(iter, False);
+      iter = temp;
+    }
+    start_chunk->next = end_chunk;
+    end_chunk->prev = start_chunk;
+    start_chunk->end =
+        start_chunk->start + delete_from - get_chunk_abs_start(start_chunk);
+    chunk_add_len(end_chunk, -delete_len);
+    end_chunk->start = start_chunk->end;
+    if (start_chunk->start == start_chunk->end) {
+      chunk_detach(head, start_chunk);
+      free_tree(start_chunk, False);
+      start_chunk = NULL;
+    }
+    if (end_chunk->start == end_chunk->end) {
+      chunk_detach(head, end_chunk);
+      free_tree(end_chunk, False);
+      end_chunk = NULL;
+    }
+  }
+}
+
+void delete_block(Chunk *head, uint32_t delete_from, uint32_t delete_len) {
+  Chunk *item = find_chunk_include(head, delete_from);
+  Chunk *father, *temp;
+  if (item == NULL) {
+    return;
+  }
+  while ((item != NULL) &&
+         (get_chunk_abs_end(item) < delete_from + delete_len)) {
+    item = item->father;
+  }
+  if (item == NULL) {
+    return;
+  }
+  delete_son_block(item, delete_from, delete_len);
+  item->end -= delete_len;
+  father = item->father;
+  if (item->next) {
+    chunk_add_len(item->next, -delete_len);
+  }
+  if (item->start == item->end) {
+    chunk_detach(head, item);
+    free_tree(item, False);
+    item = NULL;
+  }
+  while (father != NULL) {
+    temp = father->father;
+    father->end -= delete_len;
+    if (father->next) {
+      chunk_add_len(father->next, -delete_len);
+    }
+    if (father->start == father->end) {
+      chunk_detach(head, father);
+      free_tree(father, False);
+      father = NULL;
+    }
+    father = temp;
+  }
+}
+
 Chunk *splice_tree(Chunk *head1, Chunk *head2, uint32_t split_at) {
   Chunk *item1 = find_chunk_include(head1, split_at);
   Chunk *item2 = find_chunk_include(head2, split_at);
   Chunk *item1_root = item1;
   Chunk *item2_root = item2;
-  Chunk *prev, *iter, *root;
+  Chunk *prev, *iter, *root, *temp;
   while (item1_root->father) {
+    temp = item1_root->father;
     free_tree(item1_root->next, True);
     item1_root->next = NULL;
     item1_root->end =
         split_at - get_chunk_abs_start(item1_root) + item1_root->start;
-    item1_root = item1_root->father;
+    if (item1_root->start == item1_root->end) {
+      chunk_detach(head1, item1_root);
+      free_tree(item1_root, False);
+    }
+    item1_root = temp;
   }
   item1_root->end =
       split_at - get_chunk_abs_start(item1_root) + item1_root->start;
@@ -1067,26 +1284,98 @@ Chunk *splice_tree(Chunk *head1, Chunk *head2, uint32_t split_at) {
   chunk_add_len(item2_root, item1_root->end);
   HashMap map = createHashMap(NULL, NULL);
   tree_add_map(item1_root, map);
-  root = ck_alloc(sizeof(Chunk));
+  root = malloc(sizeof(Chunk));
   item1_root->next = item2_root;
   item2_root->prev = item1_root;
   root->son = item1_root;
-  root->father = root->next = NULL;
+  root->father = root->next = root->prev = NULL;
   root->start = 0;
   root->end = item2_root->end;
-  root->id = NULL;
+  root->id = "root";
   set_id_add_map(item2_root, map);
   map->clear(map);
   free(map);
   return root;
 }
 
-void struct_havoc_stage(char **argv, uint8_t *buf, uint32_t len, Chunk *tree) {
+Enum *get_random_enum(Enum *head) {
+  Enum *reserve, *iter;
+  uint32_t count, rand;
+  reserve = NULL;
+  iter = head;
+  count = 0;
+  while (iter != NULL) {
+    count += 1;
+    rand = UR(count) + 1;
+    if (rand == count) {
+      reserve = iter;
+    }
+    iter = iter->next;
+  }
+  return reserve;
+}
+
+Length *get_random_length(Length *head) {
+  Length *reserve, *iter;
+  uint32_t count, rand;
+  reserve = NULL;
+  iter = head;
+  count = 0;
+  while (iter != NULL) {
+    count += 1;
+    rand = UR(count) + 1;
+    if (rand == count) {
+      reserve = iter;
+    }
+    iter = iter->next;
+  }
+  return reserve;
+}
+
+Offset *get_random_offset(Offset *head) {
+  Offset *reserve, *iter;
+  reserve = NULL;
+  uint32_t count, rand;
+  iter = head;
+  count = 0;
+  while (iter != NULL) {
+    count += 1;
+    rand = UR(count) + 1;
+    if (rand == count) {
+      reserve = iter;
+    }
+    iter = iter->next;
+  }
+  return reserve;
+}
+
+Constraint *get_random_constraint(Constraint *head) {
+  Constraint *reserve, *iter;
+  uint32_t count, rand;
+  reserve = NULL;
+  iter = head;
+  count = 0;
+  while (iter != NULL) {
+    count += 1;
+    rand = UR(count) + 1;
+    if (rand == count) {
+      reserve = iter;
+    }
+    iter = iter->next;
+  }
+  return reserve;
+}
+
+void struct_havoc_stage(char **argv, uint8_t *buf, uint32_t len, Chunk *tree,
+                        Track *track) {
   uint8_t **all_chunks;
   uint32_t chunk_num = 0, out_len;
-  uint32_t i, index1, index2;
+  uint32_t stage_max, stage_cur, i, index1, index2;
   uint8_t *out_buf;
   Chunk *out_tree;
+  Enum *enum_field = NULL;
+  Length *len_field = NULL;
+  Offset *offset_field = NULL;
   out_len = len;
   out_buf = ck_alloc(len);
   memcpy(out_buf, buf, len);
@@ -1109,33 +1398,205 @@ void struct_havoc_stage(char **argv, uint8_t *buf, uint32_t len, Chunk *tree) {
   stage_name = "struct_havoc";
   stage_short = "chunkFuzzer1";
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
-    for (i = 0; i < 3; i++) {
-      uint32_t num = random_num(3);
+    for (i = 0; i < 8; i++) {
+      uint32_t num;
+      if(track != NULL) {
+        num = UR(8);
+      }else {
+        num = UR(3);
+      }
       switch (num) {
         case 0: {
-          index1 = random_num(chunk_num);
-          index2 = random_num(chunk_num);
-          out_buf =
-              insert_chunk(out_buf, &out_len, map, out_tree, all_chunks[index1],
-                           all_chunks[index2], random_num(2));
+          index1 = UR(chunk_num);
+          index2 = UR(chunk_num);
+          out_buf = insert_chunk(out_buf, &out_len, map, out_tree,
+                                 all_chunks[index1], all_chunks[index2], UR(2));
           break;
         };
         case 1: {
-          index1 = random_num(chunk_num);
+          index1 = UR(chunk_num);
           out_buf = delete_chunk(out_buf, &out_len, map, out_tree,
                                  all_chunks[index1]);
           break;
         };
         case 2: {
-          index1 = random_num(chunk_num);
+          index1 = UR(chunk_num);
           out_buf =
               exchange_chunk(out_buf, out_len, out_tree, all_chunks[index1]);
+          break;
+        }
+        case 3: {
+          enum_field = get_random_enum(track->enums);
+          if (enum_field == NULL) {
+            break;
+          }
+          Chunk *chunk = map->get(map, enum_field->id);
+          if (chunk == NULL) {
+            break;
+          }
+          uint32_t chunk_len = chunk->end - chunk->start;
+          uint32_t num = UR(enum_field->cans_num);
+          uint32_t candi_len = strlen(enum_field->candidates[num]);
+          uint32_t copy_len = chunk_len > candi_len ? candi_len : chunk_len;
+          memcpy(out_buf + get_chunk_abs_start(chunk),
+                 enum_field->candidates[num], copy_len);
+          break;
+        }
+        case 4: {
+          uint8_t *chunk_id;
+          if (UR(2)) {
+            len_field = get_random_length(track->lengths);
+            if (len_field == NULL) {
+              break;
+            }
+            chunk_id = len_field->id1;
+          } else {
+            offset_field = get_random_offset(track->offsets);
+            if (offset_field == NULL) {
+              break;
+            }
+            chunk_id = offset_field->id1;
+          }
+          Chunk *chunk = map->get(map, chunk_id);
+          if (chunk == NULL) {
+            break;
+          }
+          int32_t num = UR(10);
+          if (UR(2)) {
+            number_add(out_buf, chunk, num);
+          } else {
+            number_add(out_buf, chunk, -num);
+          }
+          break;
+        }
+        case 5: {
+          uint8_t *chunk_id;
+          if (UR(2)) {
+            len_field = get_random_length(track->lengths);
+            if (len_field == NULL) {
+              break;
+            }
+            chunk_id = len_field->id1;
+          } else {
+            offset_field = get_random_offset(track->offsets);
+            if (offset_field == NULL) {
+              break;
+            }
+            chunk_id = offset_field->id1;
+          }
+          Chunk *chunk = map->get(map, chunk_id);
+          if (chunk == NULL) {
+            break;
+          }
+          int32_t num = 0; /* interesting value */
+          number_set(out_buf, chunk, num);
+          break;
+        }
+        case 6: {
+          uint8_t acturally_clone = UR(4);
+          uint32_t clone_from, clone_to, clone_len;
+          uint8_t *new_buf;
+          uint8_t *chunk_id;
+          if (UR(2)) {
+            len_field = get_random_length(track->lengths);
+            if (len_field == NULL) {
+              break;
+            }
+            chunk_id = len_field->id2;
+          } else {
+            offset_field = get_random_offset(track->offsets);
+            if (offset_field == NULL) {
+              break;
+            }
+            chunk_id = offset_field->id2;
+          }
+          Chunk *chunk = map->get(map, chunk_id);
+          if (chunk == NULL) {
+            break;
+          }
+          if (acturally_clone) {
+            clone_len = 10;
+            clone_from = UR(out_len - clone_len + 1);
+          } else {
+            clone_len = 20;
+            clone_from = 0;
+          }
+
+          clone_to = get_chunk_abs_start(chunk) +
+                     UR(chunk->end - chunk->start);
+          new_buf = ck_alloc(out_len + clone_len);
+
+          /* Head */
+          memcpy(new_buf, out_buf, clone_to);
+
+          /* Inserted part */
+          if (acturally_clone) {
+            memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
+          } else {
+            memset(
+                new_buf + clone_to,
+                UR(2) ? UR(256) : out_buf[UR(out_len)],
+                clone_len);
+          }
+
+          /* Tail */
+          memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
+                 out_len - clone_to);
+          ck_free(out_buf);
+          out_buf = new_buf;
+          out_len += clone_len;
+          /* Update tree structure */
+          chunk->end += clone_len;
+          Chunk *father = chunk->father;
+          while (father != NULL) {
+            father->end += clone_len;
+            if (father->next) {
+              chunk_add_len(father->next, clone_len);
+            }
+            father = father->father;
+          }
+          if (chunk->next) {
+            chunk_add_len(chunk->next, clone_len);
+          }
+          break;
+        }
+        case 7: {
+          uint32_t del_from, del_len;
+          if (out_len < 2) {
+            break;
+          }
+          uint8_t *chunk_id;
+          if (UR(2)) {
+            len_field = get_random_length(track->lengths);
+            if (len_field == NULL) {
+              continue;
+            }
+            chunk_id = len_field->id2;
+          } else {
+            offset_field = get_random_offset(track->offsets);
+            if (offset_field == NULL) {
+              continue;
+            }
+            chunk_id = offset_field->id2;
+          }
+          Chunk *chunk = map->get(map, chunk_id);
+          if (chunk == NULL) {
+            continue;
+          }
+          del_len = 1;
+          del_from = UR(out_len - del_len + 1);
+          memmove(out_buf + del_from, out_buf + del_from + del_len,
+                  out_len - del_from - del_len);
+          out_len -= del_len;
+
+          /* Update tree structure */
+          delete_block(out_tree, del_from, del_len);
           break;
         }
       }
     }
 
-    if (common_fuzz_stuff(argv, out_buf, out_len, out_tree))
+    if (common_fuzz_stuff(argv, out_buf, out_len, out_tree, track))
       goto exit_struct_havoc_stage;
 
     if (out_len < len) {
@@ -1150,7 +1611,7 @@ void struct_havoc_stage(char **argv, uint8_t *buf, uint32_t len, Chunk *tree) {
     map = createHashMap(NULL, NULL);
     tree_add_map(out_tree->son, map);
   }
-
+  
 exit_struct_havoc_stage:
 
   freeHashMapIterator(&map_iter);
@@ -1163,46 +1624,52 @@ exit_struct_havoc_stage:
 
 void struct_describing_stage(uint8_t *buf, uint32_t len, cJSON *json) {}
 
-void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
+void describing_aware_stage(char **argv, uint8_t *buf, uint32_t len, Chunk *tree,
                             Track *track) {
+  if(track == NULL) {
+    return;
+  }
   uint32_t out_len;
   // uint32_t stage_max, stage_cur, index1, index2;
   int32_t i;
   uint8_t *out_buf;
-  Chunk *tree, *out_tree;
+  Chunk *out_tree;
   Enum *enum_iter;
   Length *length_iter;
   Offset *offset_iter;
   Constraint *cons_iter;
-  tree = get_tree(json);
   HashMap map = createHashMap(NULL, NULL);
   out_len = len;
   out_buf = ck_alloc(len);
   memcpy(out_buf, buf, len);
   out_tree = chunk_duplicate(tree, True);
   tree_add_map(out_tree->son, map);
+  stage_name = "describing aware";
+  stage_short = "chunkFuzzer2";
   /*mutation enum*/
   enum_iter = track->enums;
-  while (enum_iter) {
+  while (enum_iter != NULL) {
     uint32_t last_len = 0, stage_cur_byte;
     Chunk *cur_chunk;
     for (i = 0; i < enum_iter->cans_num; i++) {
       last_len = strlen(enum_iter->candidates[i]);
       cur_chunk = map->get(map, enum_iter->id);
       if (cur_chunk == NULL) {
-        continue;
+        break;
       }
       stage_cur_byte = get_chunk_abs_start(cur_chunk);
       if (stage_cur_byte < 0 || (stage_cur_byte + last_len) > len) {
-        continue;
+        break;
       }
       if ((cur_chunk->end - cur_chunk->start) < last_len) {
-        continue;
+        break;
       }
       /* new testcase */
       memcpy(out_buf + stage_cur_byte, enum_iter->candidates[i], last_len);
 
       /*save testcase if interesting */
+      if (common_fuzz_stuff(argv, out_buf, out_len, out_tree, track))
+        goto exit_describing_aware_stage;
 
       /* Restore all the clobbered memory */
       memcpy(out_buf + stage_cur_byte, buf, last_len);
@@ -1212,7 +1679,7 @@ void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
 
   /*mutation length*/
   length_iter = track->lengths;
-  while (length_iter) {
+  while (length_iter != NULL) {
     Chunk *meta_chunk, *payload_chunk, *father;
     uint32_t meta_len, payload_len;
     uint32_t start;
@@ -1225,22 +1692,22 @@ void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
       meta_chunk = map->get(map, length_iter->id1);
       payload_chunk = map->get(map, length_iter->id2);
       if (meta_chunk == NULL || payload_chunk == NULL) {
-        continue;
+        break;
       }
       meta_len = meta_chunk->end - meta_chunk->start;
       payload_len = payload_chunk->end - payload_chunk->start;
       if (meta_len != 1 && meta_len != 2 && meta_len != 4) {
-        continue;
+        break;
       }
       number_add(out_buf, meta_chunk, i);
-      start = random_num(out_len - i);
+      start = UR(out_len - i);
       /* new testcase */
       out_buf = copy_and_insert(out_buf, &out_len,
                                 get_chunk_abs_end(payload_chunk), start, i);
       /* update tree structure */
       payload_chunk->end += i;
       father = payload_chunk->father;
-      while (father) {
+      while (father != NULL) {
         father->end += i;
         if (father->next) {
           chunk_add_len(father->next, i);
@@ -1252,6 +1719,8 @@ void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
       }
 
       /* save testcase if interesting */
+      if (common_fuzz_stuff(argv, out_buf, out_len, out_tree, track))
+        goto exit_describing_aware_stage;
 
       /* Recover all the clobbered stucture */
       if (out_len < len) {
@@ -1272,12 +1741,12 @@ void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
       meta_chunk = map->get(map, length_iter->id1);
       payload_chunk = map->get(map, length_iter->id2);
       if (meta_chunk == NULL || payload_chunk == NULL) {
-        continue;
+        break;
       }
       meta_len = meta_chunk->end - meta_chunk->start;
       payload_len = payload_chunk->end - payload_chunk->start;
       if (meta_len != 1 && meta_len != 2 && meta_len != 4) {
-        continue;
+        break;
       }
       number_add(out_buf, meta_chunk, -i);
       /* new testcase */
@@ -1286,7 +1755,7 @@ void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
       /* update tree structure */
       payload_chunk->end -= i;
       father = payload_chunk->father;
-      while (father) {
+      while (father != NULL) {
         father->end -= i;
         if (father->next) {
           chunk_add_len(father->next, -i);
@@ -1298,6 +1767,8 @@ void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
       }
 
       /* save testcase if interesting */
+      if (common_fuzz_stuff(argv, out_buf, out_len, out_tree, track))
+        goto exit_describing_aware_stage;
 
       /* Recover all the clobbered stucture */
       if (out_len < len) {
@@ -1317,7 +1788,7 @@ void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
 
   /*mutation offset*/
   offset_iter = track->offsets;
-  while (offset_iter) {
+  while (offset_iter != NULL) {
     Chunk *meta_chunk;
     uint32_t meta_length;
     /* add offset field */
@@ -1327,11 +1798,11 @@ void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
       }
       meta_chunk = map->get(map, offset_iter->id1);
       if (meta_chunk == NULL) {
-        continue;
+        break;
       }
       meta_length = meta_chunk->end - meta_chunk->start;
       if (meta_length != 1 && meta_length != 2 && meta_length != 4) {
-        continue;
+        break;
       }
       number_add(out_buf, meta_chunk, i);
       Chunk *block = ck_alloc(sizeof(Chunk));
@@ -1345,9 +1816,11 @@ void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
 
       /* new testcase */
       out_buf = copy_and_insert(out_buf, &out_len, meta_chunk->end,
-                                random_num(out_len - i), i);
+                                UR(out_len - i), i);
 
       /* save testcase if interesting */
+      if (common_fuzz_stuff(argv, out_buf, out_len, out_tree, track))
+        goto exit_describing_aware_stage;
 
       /* Recover all the clobbered stucture */
       if (out_len < len) {
@@ -1367,70 +1840,65 @@ void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
 
   /*mutation constraint*/
   cons_iter = track->constraints;
-  while (cons_iter) {
+  while (cons_iter != NULL) {
     cons_iter = cons_iter->next;
   }
-  free_tree(tree, True);
+
+exit_describing_aware_stage:
   free_tree(out_tree, True);
   map->clear(map);
   free(map);
   ck_free(out_buf);
 }
 
-// void delete_block(cJSON* cjson_head, u32 delete_from, u32 delete_len) {
-//   cJSON* cjson_iter;
-//   cJSON* cjson_start;
-//   cJSON* cjson_end;
-//   cJSON* cjson_temp;
-//   cjson_iter = cjson_head->child;
-//   cjson_start = cjson_iter;
-//   while (cjson_iter != NULL && get_json_start(cjson_iter) < delete_from) {
-//     cjson_start = cjson_iter;
-//     cjson_iter = cjson_iter->next;
-//   }
-//   cjson_end = cjson_start;
-//   while (cjson_iter != NULL &&
-//          get_json_start(cjson_iter) < delete_from + delete_len) {
-//     cjson_end = cjson_iter;
-//     cjson_iter = cjson_iter->next;
-//   }
-//   if (cJSON_Compare(cjson_start, cjson_end, 1)) {
-//     cJSON_SetIntValue(cjson_start->child->next,
-//                       get_json_end(cjson_start) - delete_len);
-//     cjson_iter = cjson_start->next;
-//     while (cjson_iter) {
-//       cJSON_SetIntValue(cjson_iter->child,
-//                         get_json_start(cjson_iter) - delete_len);
-//       cJSON_SetIntValue(cjson_iter->child->next,
-//                         get_json_end(cjson_iter) - delete_len);
-//       cjson_iter = cjson_iter->next;
-//     }
-//   } else {
-//     cjson_iter = cjson_start->next;
-//     while (!cJSON_Compare(cjson_iter, cjson_end, 1)) {
-//       cjson_temp = cjson_iter->next;
-//       cJSON_DetachItemViaPointer(cjson_head, cjson_iter);
-//       cJSON_Delete(cjson_iter);
-//       cjson_iter = cjson_temp;
-//     }
-//     cJSON_SetIntValue(cjson_start->child->next,
-//                       get_json_end(cjson_end) - delete_len);
-//     cJSON_DetachItemViaPointer(cjson_head, cjson_end);
-//     cJSON_Delete(cjson_end);
-//     cjson_iter = cjson_start->next;
-//     while (cjson_iter) {
-//       cJSON_SetIntValue(cjson_iter->child,
-//                         get_json_start(cjson_iter) - delete_len);
-//       cJSON_SetIntValue(cjson_iter->child->next,
-//                         get_json_end(cjson_iter) - delete_len);
-//       cjson_iter = cjson_iter->next;
-//     }
-//   }
-//   if (get_json_start(cjson_start) == get_json_end(cjson_start)) {
-//     cJSON_DetachItemViaPointer(cjson_head, cjson_start);
-//     cJSON_Delete(cjson_start);
-//   }
-// }
+Boolean check_tree(Chunk *head, HashMap map) {
+  Chunk *iter;
+  iter = head;
+  while (iter) {
+    if (map->exists(map, iter->id)) {
+      printf("duplicate id\n");
+      return False;
+    }
+    map->put(map, iter->id, iter);
+    if (iter->start == iter->end) {
+      printf("iter->start == iter->end\n");
+      return False;
+    }
+    if (iter->prev) {
+      if (iter->start != iter->prev->end) {
+        printf("iter->start != iter->prev->end\n");
+        return False;
+      }
+    } else if (iter->start != 0) {
+      printf("iter->start != 0\n");
+      return False;
+    }
+    if (iter->father) {
+      if (get_chunk_abs_end(iter) > get_chunk_abs_end(iter->father)) {
+        printf(
+            "iter->id= %s, get_chunk_abs_end(iter) > "
+            "get_chunk_abs_end(iter->father)\n",
+            iter->id);
+        return False;
+      }
+    }
+    if (iter->son) {
+      if (check_tree(iter->son, map) == False) {
+        return False;
+      }
+    }
+    iter = iter->next;
+  }
+  return True;
+}
+
+void check(Chunk *tree) {
+  HashMap map = createHashMap(NULL, NULL);
+  if (check_tree(tree, map) == False) {
+    PFATAL("check tree fail\n");
+  }
+  free(map);
+}
 
 /* Take the current entry from the queue, fuzz it for a while. This
    function is a tad too long... returns 0 if fuzzed successfully, 1 if
@@ -1439,7 +1907,7 @@ void describing_aware_stage(uint8_t *buf, uint32_t len, cJSON *json,
 u8 fuzz_one(char **argv) {
   s32 len, fd, temp_len, i, j;
   u8 *in_buf, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
-  cJSON *in_json, *out_json;
+  cJSON *in_json;
   u64 havoc_queued, orig_hit_cnt, new_hit_cnt;
   u32 splice_cycle = 0, perf_score = 100, orig_perf, prev_cksum, eff_cnt = 1;
 
@@ -1453,18 +1921,19 @@ u8 fuzz_one(char **argv) {
 
   Chunk *in_tree, *out_tree;
 
+  Track *track;
   u32 start = 0, end = 0, field_len = 0;
 
 #ifdef IGNORE_FINDS
 
-  /* In IGNORE_FINDS mode, skip any entries that weren't in the
-     initial data set. */
+      /* In IGNORE_FINDS mode, skip any entries that weren't in the
+         initial data set. */
 
-  if (queue_cur->depth > 1) return 1;
+      if (queue_cur->depth > 1) return 1;
 
 #else
 
-  if (pending_favored) {
+      if (pending_favored) {
     /* If we have any favored, non-fuzzed new arrivals in the queue,
        possibly skip to them at the expense of already-fuzzed or non-favored
        cases. */
@@ -1472,8 +1941,8 @@ u8 fuzz_one(char **argv) {
     if ((queue_cur->was_fuzzed || !queue_cur->favored) &&
         UR(100) < SKIP_TO_NEW_PROB)
       return 1;
-
-  } else if (!dumb_mode && !queue_cur->favored && queued_paths > 10) {
+  }
+  else if (!dumb_mode && !queue_cur->favored && queued_paths > 10) {
     /* Otherwise, still possibly skip non-favored cases, albeit less often.
        The odds of skipping stuff are higher for already-fuzzed inputs and
        lower for never-fuzzed entries. */
@@ -1509,7 +1978,6 @@ u8 fuzz_one(char **argv) {
   close(fd);
 
   in_json = parse_json(queue_cur->format_file);
-  out_json = cJSON_Duplicate(in_json, 1);
 
   /* We could mmap() out_buf as MAP_PRIVATE, but we end up clobbering every
      single byte anyway, so it wouldn't give us any performance or memory usage
@@ -1546,14 +2014,25 @@ u8 fuzz_one(char **argv) {
     }
   }
 
-  /************
-   * TRIMMING *
-   ************/
+  in_tree = json_to_tree(in_json);
+
+  track = NULL;
+  if (queue_cur->track_file) {
+    track = parse_track_file(queue_cur->track_file);
+  }
+
+  struct_havoc_stage(argv, in_buf, len, in_tree, track);
+
+  describing_aware_stage(argv, in_buf, len, in_tree, track);
+
+      /************
+       * TRIMMING *
+       ************/
 
   if (!dumb_mode && !queue_cur->trim_done) {
-    // u8 res = trim_case(argv, queue_cur, in_buf, in_json);
+    u8 res = trim_case(argv, queue_cur, in_buf, in_tree);
 
-    // if (res == FAULT_ERROR) FATAL("Unable to execute target application");
+    if (res == FAULT_ERROR) FATAL("Unable to execute target application");
 
     if (stop_soon) {
       cur_skipped_paths++;
@@ -1568,18 +2047,12 @@ u8 fuzz_one(char **argv) {
   }
 
   memcpy(out_buf, in_buf, len);
-  cJSON_Delete(out_json);
-  out_json = cJSON_Duplicate(in_json, 1);
-  in_tree = json_to_tree(in_json);
-  out_tree = json_to_tree(in_json);
-
+  out_tree = chunk_duplicate(in_tree, True);
   /*********************
    * PERFORMANCE SCORE *
    *********************/
 
   orig_perf = perf_score = calculate_score(queue_cur);
-
-  struct_havoc_stage(argv, in_buf, len, in_tree);
 
   /* Skip right away if -d is given, if we have done deterministic fuzzing on
      this entry ourselves (was_fuzzed), or if it has gone through deterministic
@@ -1637,7 +2110,7 @@ u8 fuzz_one(char **argv) {
 #define EFF_SPAN_ALEN(_p, _l) (EFF_APOS((_p) + (_l)-1) - EFF_APOS(_p) + 1)
 
   list_itr = list;
-  while (list_itr) {
+  while (list_itr != NULL) {
     start = list_itr->start;
     end = list_itr->end;
     field_len = end - start;
@@ -1661,7 +2134,8 @@ u8 fuzz_one(char **argv) {
 
       FLIP_BIT(out_buf, stage_cur);
 
-      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
+        goto abandon_entry;
 
       FLIP_BIT(out_buf, stage_cur);
 
@@ -1748,7 +2222,7 @@ u8 fuzz_one(char **argv) {
       FLIP_BIT(out_buf, stage_cur);
       FLIP_BIT(out_buf, stage_cur + 1);
 
-      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree, track)) goto abandon_entry;
 
       FLIP_BIT(out_buf, stage_cur);
       FLIP_BIT(out_buf, stage_cur + 1);
@@ -1775,7 +2249,8 @@ u8 fuzz_one(char **argv) {
       FLIP_BIT(out_buf, stage_cur + 2);
       FLIP_BIT(out_buf, stage_cur + 3);
 
-      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
+        goto abandon_entry;
 
       FLIP_BIT(out_buf, stage_cur);
       FLIP_BIT(out_buf, stage_cur + 1);
@@ -1812,7 +2287,7 @@ u8 fuzz_one(char **argv) {
 
       out_buf[stage_cur] ^= 0xFF;
 
-      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree, track)) goto abandon_entry;
 
       /* We also use this stage to pull off a simple trick: we identify
          bytes that seem to have no effect on the current execution path
@@ -1883,7 +2358,8 @@ u8 fuzz_one(char **argv) {
 
       *(u16 *)(out_buf + i) ^= 0xFFFF;
 
-      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
+        goto abandon_entry;
       stage_cur++;
 
       *(u16 *)(out_buf + i) ^= 0xFFFF;
@@ -1917,7 +2393,8 @@ u8 fuzz_one(char **argv) {
 
       *(u32 *)(out_buf + i) ^= 0xFFFFFFFF;
 
-      if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+      if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
+        goto abandon_entry;
       stage_cur++;
 
       *(u32 *)(out_buf + i) ^= 0xFFFFFFFF;
@@ -1969,7 +2446,7 @@ u8 fuzz_one(char **argv) {
           stage_cur_val = j;
           out_buf[i] = orig + j;  // no change of file format
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -1982,7 +2459,7 @@ u8 fuzz_one(char **argv) {
           stage_cur_val = -j;
           out_buf[i] = orig - j;  // no change of file format
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2037,7 +2514,7 @@ u8 fuzz_one(char **argv) {
           stage_cur_val = j;
           *(u16 *)(out_buf + i) = orig + j;
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2048,7 +2525,7 @@ u8 fuzz_one(char **argv) {
           stage_cur_val = -j;
           *(u16 *)(out_buf + i) = orig - j;
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2063,7 +2540,7 @@ u8 fuzz_one(char **argv) {
           stage_cur_val = j;
           *(u16 *)(out_buf + i) = SWAP16(SWAP16(orig) + j);
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2074,7 +2551,7 @@ u8 fuzz_one(char **argv) {
           stage_cur_val = -j;
           *(u16 *)(out_buf + i) = SWAP16(SWAP16(orig) - j);
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2128,7 +2605,7 @@ u8 fuzz_one(char **argv) {
           stage_cur_val = j;
           *(u32 *)(out_buf + i) = orig + j;
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2139,7 +2616,7 @@ u8 fuzz_one(char **argv) {
           stage_cur_val = -j;
           *(u32 *)(out_buf + i) = orig - j;
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2154,7 +2631,7 @@ u8 fuzz_one(char **argv) {
           stage_cur_val = j;
           *(u32 *)(out_buf + i) = SWAP32(SWAP32(orig) + j);
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2165,7 +2642,7 @@ u8 fuzz_one(char **argv) {
           stage_cur_val = -j;
           *(u32 *)(out_buf + i) = SWAP32(SWAP32(orig) - j);
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2222,7 +2699,8 @@ u8 fuzz_one(char **argv) {
         stage_cur_val = interesting_8[j];
         out_buf[i] = interesting_8[j];  // no change of file format
 
-        if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
+          goto abandon_entry;
 
         out_buf[i] = orig;
         stage_cur++;
@@ -2270,7 +2748,7 @@ u8 fuzz_one(char **argv) {
 
           *(u16 *)(out_buf + i) = interesting_16[j];
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2284,7 +2762,7 @@ u8 fuzz_one(char **argv) {
           stage_val_type = STAGE_VAL_BE;
 
           *(u16 *)(out_buf + i) = SWAP16(interesting_16[j]);
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2337,7 +2815,7 @@ u8 fuzz_one(char **argv) {
 
           *(u32 *)(out_buf + i) = interesting_32[j];
 
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2351,7 +2829,7 @@ u8 fuzz_one(char **argv) {
           stage_val_type = STAGE_VAL_BE;
 
           *(u32 *)(out_buf + i) = SWAP32(interesting_32[j]);
-          if (common_fuzz_stuff(argv, out_buf, len, out_tree))
+          if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
             goto abandon_entry;
           stage_cur++;
 
@@ -2413,7 +2891,8 @@ u8 fuzz_one(char **argv) {
         memcpy(out_buf + i, extras[j].data, last_len);  // no change of file
                                                         // format
 
-        if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
+          goto abandon_entry;
 
         stage_cur++;
       }
@@ -2456,7 +2935,8 @@ u8 fuzz_one(char **argv) {
         /* Update format file */
         insert_block(out_tree, i, extras[j].len);
 
-        if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len, out_tree)) {
+        if (common_fuzz_stuff(argv, ex_tmp, len + extras[j].len, out_tree,
+                              track)) {
           ck_free(ex_tmp);
           goto abandon_entry;
         }
@@ -2512,7 +2992,8 @@ u8 fuzz_one(char **argv) {
         memcpy(out_buf + i, a_extras[j].data,
                last_len);  // no change of file format
 
-        if (common_fuzz_stuff(argv, out_buf, len, out_tree)) goto abandon_entry;
+        if (common_fuzz_stuff(argv, out_buf, len, out_tree, track))
+          goto abandon_entry;
 
         stage_cur++;
       }
@@ -2760,7 +3241,8 @@ havoc_stage:
           // temp_len -= del_len;
 
           // /* Update format file */
-          // delete_block(out_json, del_from, del_len);
+          // delete_block(out_tree, del_from, del_len);
+
           break;
         }
 
@@ -2769,45 +3251,45 @@ havoc_stage:
           if (temp_len + HAVOC_BLK_XL < MAX_FILE) {
             /* Clone bytes (75%) or insert a block of constant bytes (25%). */
 
-            u8 actually_clone = UR(4);
-            u32 clone_from, clone_to, clone_len;
-            u8 *new_buf;
+            // u8 actually_clone = UR(4);
+            // u32 clone_from, clone_to, clone_len;
+            // u8 *new_buf;
 
-            if (actually_clone) {
-              clone_len = choose_block_len(temp_len);
-              clone_from = UR(temp_len - clone_len + 1);
+            // if (actually_clone) {
+            //   clone_len = choose_block_len(temp_len);
+            //   clone_from = UR(temp_len - clone_len + 1);
 
-            } else {
-              clone_len = choose_block_len(HAVOC_BLK_XL);
-              clone_from = 0;
-            }
+            // } else {
+            //   clone_len = choose_block_len(HAVOC_BLK_XL);
+            //   clone_from = 0;
+            // }
 
-            clone_to = UR(temp_len);
+            // clone_to = UR(temp_len);
 
-            new_buf = ck_alloc_nozero(temp_len + clone_len);
+            // new_buf = ck_alloc_nozero(temp_len + clone_len);
 
-            /* Head */
+            // /* Head */
 
-            memcpy(new_buf, out_buf, clone_to);
+            // memcpy(new_buf, out_buf, clone_to);
 
-            /* Inserted part */
+            // /* Inserted part */
 
-            if (actually_clone)
-              memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
-            else
-              memset(new_buf + clone_to,
-                     UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
+            // if (actually_clone)
+            //   memcpy(new_buf + clone_to, out_buf + clone_from, clone_len);
+            // else
+            //   memset(new_buf + clone_to,
+            //          UR(2) ? UR(256) : out_buf[UR(temp_len)], clone_len);
 
-            /* Tail */
-            memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
-                   temp_len - clone_to);
+            // /* Tail */
+            // memcpy(new_buf + clone_to + clone_len, out_buf + clone_to,
+            //        temp_len - clone_to);
 
-            ck_free(out_buf);
-            out_buf = new_buf;
-            temp_len += clone_len;
+            // ck_free(out_buf);
+            // out_buf = new_buf;
+            // temp_len += clone_len;
 
-            /* Update format file */
-            insert_block(out_tree, clone_from, clone_len);
+            // /* Update format file */
+            // insert_block(out_tree, clone_from, clone_len);
           }
 
           break;
@@ -2912,58 +3394,58 @@ havoc_stage:
         }
 
         case 20: {
-          u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
-          u8 *new_buf;
+          // u32 use_extra, extra_len, insert_at = UR(temp_len + 1);
+          // u8 *new_buf;
 
           /* Insert an extra. Do the same dice-rolling stuff as for the
              previous case. */
 
-          if (!extras_cnt || (a_extras_cnt && UR(2))) {
-            use_extra = UR(a_extras_cnt);
-            extra_len = a_extras[use_extra].len;
+          // if (!extras_cnt || (a_extras_cnt && UR(2))) {
+          //   use_extra = UR(a_extras_cnt);
+          //   extra_len = a_extras[use_extra].len;
 
-            if (temp_len + extra_len >= MAX_FILE) break;
+          //   if (temp_len + extra_len >= MAX_FILE) break;
 
-            new_buf = ck_alloc_nozero(temp_len + extra_len);
+          //   new_buf = ck_alloc_nozero(temp_len + extra_len);
 
-            /* Head */
-            memcpy(new_buf, out_buf, insert_at);
+          //   /* Head */
+          //   memcpy(new_buf, out_buf, insert_at);
 
-            /* Inserted part */
-            memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
+          //   /* Inserted part */
+          //   memcpy(new_buf + insert_at, a_extras[use_extra].data, extra_len);
 
-          } else {
-            use_extra = UR(extras_cnt);
-            extra_len = extras[use_extra].len;
+          // } else {
+          //   use_extra = UR(extras_cnt);
+          //   extra_len = extras[use_extra].len;
 
-            if (temp_len + extra_len >= MAX_FILE) break;
+          //   if (temp_len + extra_len >= MAX_FILE) break;
 
-            new_buf = ck_alloc_nozero(temp_len + extra_len);
+          //   new_buf = ck_alloc_nozero(temp_len + extra_len);
 
-            /* Head */
-            memcpy(new_buf, out_buf, insert_at);
+          //   /* Head */
+          //   memcpy(new_buf, out_buf, insert_at);
 
-            /* Inserted part */
-            memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
-          }
+          //   /* Inserted part */
+          //   memcpy(new_buf + insert_at, extras[use_extra].data, extra_len);
+          // }
 
-          /* Tail */
-          memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
-                 temp_len - insert_at);
+          // /* Tail */
+          // memcpy(new_buf + insert_at + extra_len, out_buf + insert_at,
+          //        temp_len - insert_at);
 
-          ck_free(out_buf);
-          out_buf = new_buf;
-          temp_len += extra_len;
+          // ck_free(out_buf);
+          // out_buf = new_buf;
+          // temp_len += extra_len;
 
-          /* Update format file */
-          insert_block(out_tree, insert_at, extra_len);
+          // /* Update format file */
+          // insert_block(out_tree, insert_at, extra_len);
 
           break;
         }
       }
     }
 
-    if (common_fuzz_stuff(argv, out_buf, temp_len, out_tree))
+    if (common_fuzz_stuff(argv, out_buf, temp_len, out_tree, track))
       goto abandon_entry;
 
     /* out_buf might have been mangled a bit, so let's restore it to its
@@ -3131,7 +3613,6 @@ abandon_entry:
   ck_free(eff_map);
 
   cJSON_Delete(in_json);
-  cJSON_Delete(out_json);
 
   free_node_list(list);
   free_tree(in_tree, True);

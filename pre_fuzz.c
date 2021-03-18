@@ -179,7 +179,7 @@ trimmer uses power-of-two increments somewhere between 1/16 and 1/1024 of
 file size, to keep the stage short and sweet. */
 
 u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf,
-                    cJSON* in_json) {
+                    Chunk *tree) {
   static u8 tmp[64];
   static u8 clean_trace[MAP_SIZE];
 
@@ -187,6 +187,7 @@ u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf,
   u32 trim_exec = 0;
   u32 remove_len;
   u32 len_p2;
+  cJSON *json;
 
   /* Although the trimmer will be less useful when variable behavior is
      detected, it will still work to some extent, so we don't check for
@@ -244,7 +245,7 @@ u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf,
                 move_tail);
         /* TODO: need to update the format file */
         if (remove_pos <= q->len + trim_avail - 1) {
-          // delete_block(in_json, remove_pos, trim_avail);
+          delete_block(tree, remove_pos, trim_avail);
         }
 
         /* Let's save a clean trace, which will be needed by
@@ -289,10 +290,12 @@ u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf,
 
     if (fd < 0) PFATAL("Unable to create '%s'", q->fname);
 
-    cjson_str = cJSON_Print(in_json);
+    json = tree_to_json(tree);
+    cjson_str = cJSON_Print(json);
 
     ck_write(fd, cjson_str, strlen(cjson_str), q->format_file);
     free(cjson_str);
+    cJSON_Delete(json);
     close(fd);
 
     memcpy(trace_bits, clean_trace, MAP_SIZE);
