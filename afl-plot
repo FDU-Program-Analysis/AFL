@@ -62,6 +62,13 @@ if [ ! -f "$1/plot_data" ]; then
 
 fi
 
+if [ ! -f "$1/distance_file" ]; then
+
+  echo "[-] Error: input directory is not valid (missing 'distance_file')." 1>&2
+  exit 1
+
+fi
+
 BANNER="`cat "$1/fuzzer_stats" | grep '^afl_banner ' | cut -d: -f2- | cut -b2-`"
 
 test "$BANNER" = "" && BANNER="(none)"
@@ -133,12 +140,17 @@ plot '$1/plot_data' using 1:11 with filledcurve x1 title '' linecolor rgb '#0090
      '$1/plot_data' using 1:11 with lines title '    execs/sec' linecolor rgb '#0090ff' linewidth 3 smooth bezier;
 
 set terminal png truecolor enhanced size 1000,200 butt
-set output '$2/state_bitmap.png'
+set output '$2/distance.png'
 
-plot '$1/plot_data' using 1:7 with filledcurve x1 title '' linecolor rgb '#c00080' fillstyle transparent solid 0.2 noborder, \\
-     '' using 1:7 with lines title ' state bitmap density' linecolor rgb '#c00080' linewidth 3 smooth bezier
+plot '$1/distance_file' using 1:2 with line title 'distance' linecolor rgb '#0090ff' linewidth 3 smooth bezier;
 
 _EOF_
+
+# set terminal png truecolor enhanced size 1000,200 butt
+# set output '$2/distance.png'
+
+# plot '$1/distance_file' using 
+
 
 ) | gnuplot 
 
@@ -161,7 +173,7 @@ cat >"$2/index.html" <<_EOF_
 <img src="high_freq.png" width=1000 height=300><p>
 <img src="low_freq.png" width=1000 height=200><p>
 <img src="exec_speed.png" width=1000 height=200><p>
-<img src="state_bitmap.png" width=1000 height=200>
+<img src="distance.png" width=1000 height=200><p>
 
 _EOF_
 

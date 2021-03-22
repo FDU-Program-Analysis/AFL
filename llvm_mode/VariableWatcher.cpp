@@ -5,6 +5,7 @@
         > Created Time: Thu 24 Sep 2020 02:42:49 PM CST
  ************************************************************************/
 #define AFL_LLVM_PASS
+//#define PASS_LOG
 
 #include "../config.h"
 #include "../debug.h"
@@ -33,15 +34,12 @@ cl::opt<std::string> OutDirectory(
     "outdir",
     cl::desc(
         "Output directory contains Ftargets.txtm Fnames.txt and BBnames.txt."),
-    cl::value_desc("outdir")
-);
+    cl::value_desc("outdir"));
 
 cl::opt<std::string> DistanceFile(
     "distance",
     cl::desc("Distance file containing distance of each BB to targets."),
-    cl::value_desc("distance")
-);
-
+    cl::value_desc("distance"));
 
 /* some function need to be skip */
 static bool isBlacklisted(const Function *F) {
@@ -118,12 +116,12 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
       FATAL("Cannot specify both '-outdir' and '-distance'!");
       return false;
     }
-    
+
     std::map<std::string, int> bb_to_dis;
     std::vector<std::string> basic_blocks;
 
     if (!OutDirectory.empty()) {
-      
+
       is_labyrinth_preprocessing = true;
 
     } else if (!DistanceFile.empty()) {
@@ -136,7 +134,8 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
           std::size_t pos = line.find(",");
           std::string bb_name = line.substr(0, pos);
-          int bb_dis = (int) (100.0 * atof(line.substr(pos + 1, line.length()).c_str()));
+          int bb_dis =
+              (int)(100.0 * atof(line.substr(pos + 1, line.length()).c_str()));
 
           bb_to_dis.emplace(bb_name, bb_dis);
           basic_blocks.push_back(bb_name);
@@ -148,48 +147,61 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
         FATAL("Unable to find %s.", DistanceFile.c_str());
         return false;
       }
-    
     }
 
     /* show a banner */
     if (is_labyrinth_preprocessing || is_labyrinth_Instrumentation)
       SAYF(cCYA "state-llvm-pass " cBRI VERSION cRST " (%s mode)\n",
-        (is_labyrinth_preprocessing ? "preprocessing" : "distance instrumentation"));
+           (is_labyrinth_preprocessing ? "preprocessing"
+                                       : "distance instrumentation"));
 
     /* get label, print CFG and tag target BB */
     if (is_labyrinth_preprocessing) {
-      
-      std::ofstream bbnames(OutDirectory + "/BBnames.txt", std::ofstream::out | std::ofstream::app);
-      std::ofstream bbcalls(OutDirectory + "/BBcalls.txt", std::ofstream::out | std::ofstream::app);
-      std::ofstream bbtargets(OutDirectory + "/BBtargets.txt", std::ofstream::out | std::ofstream::app);
-      std::ofstream fnames(OutDirectory + "/Fnames.txt", std::ofstream::out | std::ofstream::app);
-      std::ofstream ftargets(OutDirectory + "/Ftargets.txt", std::ofstream::out | std::ofstream::app);
+
+      std::ofstream bbnames(OutDirectory + "/BBnames.txt",
+                            std::ofstream::out | std::ofstream::app);
+      std::ofstream bbcalls(OutDirectory + "/BBcalls.txt",
+                            std::ofstream::out | std::ofstream::app);
+      std::ofstream bbtargets(OutDirectory + "/BBtargets.txt",
+                              std::ofstream::out | std::ofstream::app);
+      std::ofstream fnames(OutDirectory + "/Fnames.txt",
+                           std::ofstream::out | std::ofstream::app);
+      std::ofstream ftargets(OutDirectory + "/Ftargets.txt",
+                             std::ofstream::out | std::ofstream::app);
 
       std::string dotfiles(OutDirectory + "/dot-files");
       if (sys::fs::create_directory(dotfiles)) {
         FATAL("Could not create directory %s", dotfiles.c_str());
       }
 
-      outs() << "[debug]" << "file: " << M.getModuleIdentifier() << "\n";
+      outs() << "[debug]"
+             << "file: " << M.getModuleIdentifier() << "\n";
       for (auto &F : M) {
-        outs() << "[debug]" << "function: " << F.getName() << "\n";
+
+        outs() << "[debug]"
+               << "function: " << F.getName() << "\n";
+
         bool has_BBs = false;
         std::string funcName = F.getName();
-
         bool is_target_BB = false;
+        std::string filename;
+
         for (auto &BB : F) {
 
           std::string bb_name("");
-          std::string filename;
           unsigned line;
+          std::string transition("");
+          std::string check("");
 
           for (auto &I : BB) {
 
             getDebugLoc(&I, filename, line);
             bool is_target = false;
-
+            bool is_transition = false; // true for transition, false for check
+            
             static const std::string Xlibs("/usr/");
-            if (filename.empty() || line == 0 || !filename.compare(0, Xlibs.size(), Xlibs)) {
+            if (filename.empty() || line == 0 ||
+                !filename.compare(0, Xlibs.size(), Xlibs)) {
               continue;
             }
 
@@ -204,23 +216,64 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
             }
 
             /* get stateful variable/member label */
-            if (auto *SI = dyn_cast<StoreInst>(&I)) {
-              
-              if (SI->getMetadata("labyrinth.label.state_describing.member")) {
-                is_target = true;
-                outs() << "[debug]" << "labyrinth: " << SI->getPointerOperand()->getName() << "\n";
-                outs() << "[debug]" << bb_name << "\n";
-              } else if (SI->getMetadata("labyrinth.label.state_describing.variable")) {
-                is_target = true;
-                outs() << "[debug]" << "labyrinth: " << SI->getPointerOperand()->getName() << "\n";
-                outs() << "[debug]" << bb_name << "\n";
-              }
+            if (I.getMetadata("labyrinth.label.state_describing.member")) {
+              is_target = true;
+              is_transition = true;
+
+              outs() << "[debug]"
+                     << "labyrinth member: " << I << "\n";
+              outs() << "[debug]" << bb_name << "\n";
+
+            } else if (I.getMetadata("labyrinth.label.state_describing.variable")) {
+              is_target = true;
+              if (dyn_cast<StoreInst>(&I))
+                is_transition = true;
+              else
+                is_transition = false;
+
+              outs() << "[debug]"
+                     << "labyrinth variable: " << I << "\n";
+              outs() << "[debug]" << bb_name << "\n";
+
+            } else if (I.getMetadata("labyrinth.label.state_describing.case")) {
+              is_target = true;
+              is_transition = false;
+
+              outs() << "[debug]"
+                     << "labyrinth switch: " << I << "\n";
+              outs() << "[debug]" << bb_name << "\n";
+
             }
+
 
             /* write target BB's name */
             if (is_target) {
+              inst_count++;
               bbtargets << bb_name << "\n";
               is_target_BB = true;
+
+              SmallVector<std::pair<unsigned, MDNode*>, 3> Nodes;
+
+              /* get group and value info from metadata */
+              I.getAllMetadataOtherThanDebugLoc(Nodes);
+                auto Node = Nodes[Nodes.size() - 1];
+                if (Node.second->getNumOperands() == 2) {
+                  if(MDString *MDS = dyn_cast<MDString>(Node.second->getOperand(0).get())) {
+                    if (is_transition)
+                      transition = transition + "G" + MDS->getString().str();
+                    else
+                      check = check + "G" + MDS->getString().str();
+                  }
+
+                  if(MDString *MDS = dyn_cast<MDString>(Node.second->getOperand(1).get())) {
+                    if (is_transition)
+                      transition = transition + "V" + MDS->getString().str() + ",";
+                    else
+                      check = check + "V" + MDS->getString().str() + ",";
+                  }
+
+                }
+
             }
 
             /* record call site */
@@ -233,16 +286,16 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
               if (auto *CalledFunc = CI->getCalledFunction()) {
                 if (!isBlacklisted(CalledFunc)) {
-                  bbcalls << bb_name << "," << CalledFunc->getName().str() << "\n";
+                  bbcalls << bb_name << "," << CalledFunc->getName().str()
+                          << "\n";
                 }
               }
             }
-
           }
 
           /* set BB name */
           if (!bb_name.empty()) {
-            
+
             BB.setName(bb_name + ":");
             if (!BB.hasName()) {
               std::string newname = bb_name + ":";
@@ -251,15 +304,32 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               StringRef NameRef = t.toStringRef(NameData);
               BB.setValueName(ValueName::Create(NameRef));
             }
+            
+            if (!transition.empty()) {
+              transition = "transition:" + transition;
+              transition.pop_back();
+              outs() << "[debug]" << transition << "\n";
+            }
+
+            if (!check.empty()) {
+              check = "check:" + check;
+              check.pop_back();
+              outs() << "[debug]" << check << "\n";
+            }
+
+            // std::string suffix = transition + ":" + check; 
+            // BB.setName(BB.getName().str() + suffix);
 
             bbnames << BB.getName().str() << "\n";
             has_BBs = true;
           }
-          
         }
-      
+
         /* print CFG */
         if (has_BBs) {
+          outs() << "[debug]"
+                 << "generating CFG for function: " << funcName << "\n";
+
           std::string CFGFileName = dotfiles + "/cfg." + funcName + ".dot";
           std::error_code EC;
           raw_fd_ostream CFGFile(CFGFileName, EC, sys::fs::F_None);
@@ -274,13 +344,18 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
           fnames << funcName << "\n";
         }
-        outs() << "[debug]" << "------------- function end -------------" << "\n";
+        outs() << "[debug]"
+               << "------------- function end -------------"
+               << "\n";
       }
-      outs() << "[debug]" << "---------------- file end ----------------" << "\n";
+      outs() << "[debug]"
+             << "---------------- file end ----------------"
+             << "\n";
+      outs() << "\n";
 
-    /* Instrumentation for distance */
+      /* Instrumentation for distance */
     } else if (is_labyrinth_Instrumentation) {
-       
+
       LLVMContext &CTX = M.getContext();
 
       IntegerType *Int8Ty = IntegerType::getInt8Ty(CTX);
@@ -289,23 +364,61 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
       IntegerType *Int64Ty = IntegerType::getInt64Ty(CTX);
 
 #ifdef WORD_SIZE_64
-      IntegerType * LargestType = Int64Ty;
+      IntegerType *LargestType = Int64Ty;
       ConstantInt *MapCntLoc = ConstantInt::get(LargestType, MAP_SIZE + 8);
 #else
-      IntegerType * LargestType = Int32Ty;
+      IntegerType *LargestType = Int32Ty;
       ConstantInt *MapCntLoc = ConstantInt::get(LargestType, MAP_SIZE + 4);
 #endif
 
       ConstantInt *MapDistLoc = ConstantInt::get(LargestType, MAP_SIZE);
       ConstantInt *One = ConstantInt::get(LargestType, 1);
 
-      /* get SHM region in AFL, and the distance and counter located behind the AFLMapPtr */
+      /* get SHM region in AFL, and the distance and counter located behind the
+       * AFLMapPtr */
       GlobalVariable *AFLMapPtr = M.getGlobalVariable("__afl_area_ptr");
 
-        // new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
-        //                  GlobalValue::ExternalLinkage, 0, "__afl_area_ptr");
-      
+#ifdef PASS_LOG
+        /* printf function */
+        // declaration of printf
+        PointerType *PrintfArgTy = PointerType::getUnqual(Type::getInt8Ty(CTX));
+        FunctionType *PrintfTy = FunctionType::get(IntegerType::getInt32Ty(CTX), 
+            PrintfArgTy, /*IsVarArgs=*/true);
+        FunctionCallee Printf = M.getOrInsertFunction("printf", PrintfTy);
 
+        // set attributes
+        Function *PrintfF = dyn_cast<Function>(Printf.getCallee());
+        PrintfF->setDoesNotThrow();
+        PrintfF->addParamAttr(0, Attribute::NoCapture);
+        PrintfF->addParamAttr(0, Attribute::ReadOnly);
+
+        // inject a global variable that will hold the printf format string
+        Constant *FormatStr = ConstantDataArray::getString(
+            CTX, "[runtime log] distance: %d, count %d\n");
+        Constant *FormatStrVar =
+            M.getOrInsertGlobal("FormatStr", FormatStr->getType());
+        if (auto *Var = dyn_cast<GlobalVariable>(FormatStrVar)) {
+          if (!Var->hasInitializer())
+            Var->setInitializer(FormatStr);
+          Var->setLinkage(GlobalValue::PrivateLinkage);
+        }
+
+        Constant *BBNameFormatStr = ConstantDataArray::getString(
+            CTX, "[runtime log] BB name: %s\n");
+        Constant *BBNameFormatStrVar =
+            M.getOrInsertGlobal("BBNameFormatStr", FormatStr->getType());
+        if (auto *Var = dyn_cast<GlobalVariable>(BBNameFormatStrVar)) {
+          if (!Var->hasInitializer())
+            Var->setInitializer(BBNameFormatStr);
+          Var->setLinkage(GlobalValue::PrivateLinkage);
+        }
+
+        /* printf function end*/
+#endif
+
+
+      outs() << "[debug]"
+             << "file: " << M.getModuleIdentifier() << "\n";
       for (auto &F : M) {
 
         int distance = -1;
@@ -345,322 +458,251 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
           BasicBlock::iterator IP = BB.getFirstInsertionPt();
           IRBuilder<> IRB(&(*IP));
-          
+
+#ifdef PASS_LOG
+          auto BBNameStrPtr = IRB.CreateGlobalStringPtr(bb_name);
+          Value *BBNameFormatStrPtr = IRB.CreateBitCast(BBNameFormatStrVar, PrintfArgTy, "BBNameFormatStr");
+          IRB.CreateCall(Printf, {BBNameFormatStrPtr, BBNameStrPtr});
+#endif
+
           if (distance > 0) {
 
-            ConstantInt *Distance = ConstantInt::get(LargestType, (unsigned) distance);
+            outs() << "[debug]" << "BB name: " << bb_name 
+                   << " distance: " << distance << "\n";
+
+            ConstantInt *Distance =
+                ConstantInt::get(LargestType, (unsigned)distance);
 
             /* add distance to shm[MAP_SIZE] */
             LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
             Value *MapDistPtr = IRB.CreateBitCast(
-              IRB.CreateGEP(MapPtr, MapDistLoc), LargestType->getPointerTo());
+                IRB.CreateGEP(MapPtr, MapDistLoc), LargestType->getPointerTo());
             LoadInst *MapDist = IRB.CreateLoad(MapDistPtr);
-            MapDist->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(CTX, None));
+            MapDist->setMetadata(M.getMDKindID("nosanitize"),
+                                 MDNode::get(CTX, None));
 
             Value *IncDist = IRB.CreateAdd(MapDist, Distance);
             IRB.CreateStore(IncDist, MapDistPtr)
-              ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(CTX, None));
+                ->setMetadata(M.getMDKindID("nosanitize"),
+                              MDNode::get(CTX, None));
 
             /* increase count at shm[MAP_SIZE + 4 or 8] */
             Value *MapCntPtr = IRB.CreateBitCast(
-              IRB.CreateGEP(MapPtr, MapCntLoc), LargestType->getPointerTo());
+                IRB.CreateGEP(MapPtr, MapCntLoc), LargestType->getPointerTo());
             LoadInst *MapCnt = IRB.CreateLoad(MapCntPtr);
-            MapCnt->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(CTX, None));
+            MapCnt->setMetadata(M.getMDKindID("nosanitize"),
+                                MDNode::get(CTX, None));
 
             Value *IncCnt = IRB.CreateAdd(MapCnt, One);
             IRB.CreateStore(IncCnt, MapCntPtr)
-              ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(CTX, None));
+                ->setMetadata(M.getMDKindID("nosanitize"),
+                              MDNode::get(CTX, None));
+#ifdef PASS_LOG
+            /* print runtime log */
+            Value *FormatStrPtr = IRB.CreateBitCast(FormatStrVar, PrintfArgTy, "FormatStr");
+            IRB.CreateCall(Printf,{FormatStrPtr, MapDist, MapCnt});
 
+#endif
             inst_count++;
           }
-
         }
       }
 
+      outs() << "[debug]"
+             << "Instrumented " << inst_count << " locations\n";
     }
-//===================================================================================
+    //===================================================================================
+
+    //     unsigned VarNameNum = 0;
+    //     bool Instrumented = false;
+    //     auto &CTX = M.getContext();
+
+    //     IntegerType *Int8Ty = IntegerType::getInt8Ty(CTX);
+    //     IntegerType *Int16Ty = IntegerType::getInt16Ty(CTX);
+    //     IntegerType *Int32Ty = IntegerType::getInt32Ty(CTX);
+    //     IntegerType *Int64Ty = IntegerType::getInt64Ty(CTX);
+    //     IntegerType *IntMapSizeTy = IntegerType::getIntNTy(CTX,
+    //     MAP_SIZE_POW2);
 
 
-//     unsigned VarNameNum = 0;
-//     bool Instrumented = false;
-//     auto &CTX = M.getContext();
+    //     } else {
+    //       /* traversal */
+    //       outs() << "file: [" << M.getModuleIdentifier() << "]\n";
+    //       for (auto &F : M) {
 
-//     IntegerType *Int8Ty = IntegerType::getInt8Ty(CTX);
-//     IntegerType *Int16Ty = IntegerType::getInt16Ty(CTX);
-//     IntegerType *Int32Ty = IntegerType::getInt32Ty(CTX);
-//     IntegerType *Int64Ty = IntegerType::getInt64Ty(CTX);
-//     IntegerType *IntMapSizeTy = IntegerType::getIntNTy(CTX, MAP_SIZE_POW2);
+    //         outs() << "function: [" << F.getName() << "]\n";
+    //         for (auto &BB : F) {
 
-// #ifdef PASS_LOG
-//     /* printf function */
-//     // declaration of printf
-//     PointerType *PrintfArgTy = PointerType::getUnqual(Type::getInt8Ty(CTX));
-//     FunctionType *PrintfTy =
-//         FunctionType::get(IntegerType::getInt32Ty(CTX), PrintfArgTy,
-//                           /*IsVarArgs=*/true);
-//     FunctionCallee Printf = M.getOrInsertFunction("printf", PrintfTy);
+    //           for (auto &I : BB) {
+    //             if (auto *SI = dyn_cast<StoreInst>(&I)) {
+    //               bool IsMember = false;
+    //               bool IsVariable = false;
+    //               Value *PtrValue = SI->getPointerOperand();
+    //               unsigned map_size = MAP_SIZE_POW2;
+    //               unsigned int Num;
+    //               ConstantInt *Number = nullptr;
 
-//     // set attributes
-//     Function *PrintfF = dyn_cast<Function>(Printf.getCallee());
-//     PrintfF->setDoesNotThrow();
-//     PrintfF->addParamAttr(0, Attribute::NoCapture);
-//     PrintfF->addParamAttr(0, Attribute::ReadOnly);
+    //               if
+    //               (SI->getMetadata("labyrinth.label.state_describing.member"))
+    //               {
+    //                 IsMember = true;
+    //                 StringRef MemName = PtrValue->getName();
+    //                 // outs() << "member: " << MemName << "\n";
 
-//     // inject a global variable that will hold the printf format string
-//     Constant *IntFormatStr = ConstantDataArray::getString(
-//         CTX, "[runtime log] file: %s name: %s value: %lld => %lld idx: %d "
-//              "counter: %d\n");
-//     Constant *FltFormatStr = ConstantDataArray::getString(
-//         CTX, "[runtime log] file: %s name: %s value: %lf => %lf\n");
-//     Constant *IntFormatStrVar =
-//         M.getOrInsertGlobal("IntFormatStr", IntFormatStr->getType());
-//     if (auto *Var = dyn_cast<GlobalVariable>(IntFormatStrVar)) {
-//       if (!Var->hasInitializer())
-//         Var->setInitializer(IntFormatStr);
-//       Var->setLinkage(GlobalValue::PrivateLinkage);
-//     }
-//     Constant *FltFormatStrVar =
-//         M.getOrInsertGlobal("FltFormatStr", FltFormatStr->getType());
-//     if (auto *Var = dyn_cast<GlobalVariable>(FltFormatStrVar)) {
-//       if (!Var->hasInitializer())
-//         Var->setInitializer(FltFormatStr);
-//       Var->setLinkage(GlobalValue::PrivateLinkage);
-//     }
+    //                 // trim member variable number
+    //                 size_t len = MemName.size();
+    //                 for (size_t i = 0; i < len; ++i) {
+    //                   if (isDigit(MemName[i])) {
+    //                     MemName = MemName.take_front(i);
+    //                     // outs() << "trim name: " << MemName << "\n";
+    //                     break;
+    //                   }
+    //                 }
 
-//     Constant *ModuleName =
-//         ConstantDataArray::getString(CTX, M.getModuleIdentifier());
-//     Constant *ModuleNameVar =
-//         M.getOrInsertGlobal("ModuleName", ModuleName->getType());
-//     dyn_cast<GlobalVariable>(ModuleNameVar)->setInitializer(ModuleName);
-//     dyn_cast<GlobalVariable>(ModuleNameVar)
-//         ->setLinkage(GlobalValue::PrivateLinkage);
-//     /* printf function end*/
-// #endif
+    //                 if (MemberSet.count(MemName)) {
+    //                   Num = MemberSet.at(MemName);
+    //                   outs() << "member: " << Num << " name:" << MemName <<
+    //                   "\n";
+    //                 } else {
+    //                   Num = AFL_R(MAP_SIZE);
+    //                   MemberSet.insert(
+    //                       std::pair<StringRef, unsigned int>(MemName, Num));
+    //                   outs() << "first member: " << Num << " name: " <<
+    //                   MemName
+    //                          << "\n";
+    //                 }
+    //                 Number = ConstantInt::get(IntMapSizeTy, Num);
+    //               }
 
+    //               if (SI->getMetadata(
+    //                       "labyrinth.label.state_describing.variable")) {
+    //                 IsVariable = true;
+    //                 if (IsMember) {
+    //                   outs() << "Both error\n";
+    //                 }
 
-//     } else {
-//       /* traversal */
-//       outs() << "file: [" << M.getModuleIdentifier() << "]\n";
-//       for (auto &F : M) {
+    //                 // get variable number
+    //                 StringRef VarName = PtrValue->getName();
+    //                 if (VariableSet.count(PtrValue)) {
+    //                   Num = VariableSet.at(PtrValue);
+    //                   outs() << "var: " << Num << " name: " << VarName <<
+    //                   "\n";
+    //                 } else {
+    //                   Num = AFL_R(MAP_SIZE);
+    //                   VariableSet.insert(
+    //                       std::pair<Value *, unsigned int>(PtrValue, Num));
+    //                   outs() << "first var: " << Num << " name: " << VarName
+    //                          << "\n";
+    //                 }
+    //                 Number = ConstantInt::get(IntMapSizeTy, Num);
+    //               }
 
-//         outs() << "function: [" << F.getName() << "]\n";
-//         for (auto &BB : F) {
+    //               if (IsMember || IsVariable) {
 
-//           for (auto &I : BB) {
-//             if (auto *SI = dyn_cast<StoreInst>(&I)) {
-//               bool IsMember = false;
-//               bool IsVariable = false;
-//               Value *PtrValue = SI->getPointerOperand();
-//               unsigned map_size = MAP_SIZE_POW2;
-//               unsigned int Num;
-//               ConstantInt *Number = nullptr;
+    //                 // instrumentation
+    //                 IRBuilder<> IRB(SI->getNextNonDebugInstruction());
+    //                 LoadInst *Load = IRB.CreateLoad(PtrValue);
 
-//               if (SI->getMetadata("labyrinth.label.state_describing.member")) {
-//                 IsMember = true;
-//                 StringRef MemName = PtrValue->getName();
-//                 // outs() << "member: " << MemName << "\n";
+    //                 // casting float and double into integer
+    //                 Value *Cast = nullptr;
+    //                 Type *ValueTy =
+    //                     Load->getPointerOperandType()->getPointerElementType();
+    //                 if (ValueTy->isPointerTy()) {
+    //                   continue;
+    //                 } else if (ValueTy->isIntegerTy()) {
+    //                   Cast = Load;
+    //                 } else if (ValueTy->isFloatTy()) {
+    //                   Cast = IRB.CreateBitCast(Load, Int32Ty);
+    //                 } else if (ValueTy->isDoubleTy()) {
+    //                   Cast = IRB.CreateBitCast(Load, Int64Ty);
+    //                 }
 
-//                 // trim member variable number
-//                 size_t len = MemName.size();
-//                 for (size_t i = 0; i < len; ++i) {
-//                   if (isDigit(MemName[i])) {
-//                     MemName = MemName.take_front(i);
-//                     // outs() << "trim name: " << MemName << "\n";
-//                     break;
-//                   }
-//                 }
+    //                 // bitwidth transformation
+    //                 Value *Xor = nullptr;
+    //                 if (Cast != nullptr) {
+    //                   IntegerType *IntTy =
+    //                   dyn_cast<IntegerType>(Cast->getType()); unsigned
+    //                   bitwidth = IntTy->getBitWidth(); if (bitwidth <
+    //                   map_size) {
+    //                     Cast = IRB.CreateZExt(
+    //                         Cast, IntegerType::getIntNTy(CTX, map_size));
+    //                   } else if (bitwidth > map_size) {
+    //                     switch (bitwidth) {
+    //                     case 64: {
+    //                       Value *tmp = IRB.CreateTrunc(Cast, Int16Ty);
+    //                       for (int i = 1; i <= 3; ++i) {
+    //                         Value *part = IRB.CreateLShr(Cast, 16 * i);
+    //                         part = IRB.CreateTrunc(part, Int16Ty);
+    //                         tmp = IRB.CreateXor(tmp, part);
+    //                       }
+    //                       if (map_size > 16)
+    //                         tmp = IRB.CreateZExt(tmp, IntMapSizeTy);
+    //                       Cast = tmp;
+    //                       break;
+    //                     }
+    //                     case 32: {
+    //                       Value *high = IRB.CreateLShr(Cast, 16);
+    //                       high = IRB.CreateTrunc(high, Int16Ty);
+    //                       Value *low = IRB.CreateTrunc(Cast, Int16Ty);
+    //                       Cast = IRB.CreateXor(high, low);
+    //                       if (map_size > 16)
+    //                         Cast = IRB.CreateZExt(Cast, IntMapSizeTy);
+    //                       break;
+    //                     }
+    //                     default:
+    //                       Cast = IRB.CreateTrunc(Cast, IntMapSizeTy);
+    //                       break;
+    //                     }
+    //                   }
+    //                   Xor = IRB.CreateXor(Cast, Number);
 
-//                 if (MemberSet.count(MemName)) {
-//                   Num = MemberSet.at(MemName);
-//                   outs() << "member: " << Num << " name:" << MemName << "\n";
-//                 } else {
-//                   Num = AFL_R(MAP_SIZE);
-//                   MemberSet.insert(
-//                       std::pair<StringRef, unsigned int>(MemName, Num));
-//                   outs() << "first member: " << Num << " name: " << MemName
-//                          << "\n";
-//                 }
-//                 Number = ConstantInt::get(IntMapSizeTy, Num);
-//               }
+    //                   // other type
+    //                 } else {
+    //                   Xor = Number;
+    //                   outs() << "[pass-log] "
+    //                          << "cast part: other type: " << *Load << "\n";
+    //                 }
 
-//               if (SI->getMetadata(
-//                       "labyrinth.label.state_describing.variable")) {
-//                 IsVariable = true;
-//                 if (IsMember) {
-//                   outs() << "Both error\n";
-//                 }
+    //                 // get map idx
+    //                 LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
+    //                 Value *Ext = IRB.CreateZExt(Xor, Int32Ty);
+    //                 Value *MapPtrIdx = IRB.CreateGEP(MapPtr, Ext);
 
-//                 // get variable number
-//                 StringRef VarName = PtrValue->getName();
-//                 if (VariableSet.count(PtrValue)) {
-//                   Num = VariableSet.at(PtrValue);
-//                   outs() << "var: " << Num << " name: " << VarName << "\n";
-//                 } else {
-//                   Num = AFL_R(MAP_SIZE);
-//                   VariableSet.insert(
-//                       std::pair<Value *, unsigned int>(PtrValue, Num));
-//                   outs() << "first var: " << Num << " name: " << VarName
-//                          << "\n";
-//                 }
-//                 Number = ConstantInt::get(IntMapSizeTy, Num);
-//               }
-
-//               if (IsMember || IsVariable) {
-
-//                 // instrumentation
-//                 IRBuilder<> IRB(SI->getNextNonDebugInstruction());
-//                 LoadInst *Load = IRB.CreateLoad(PtrValue);
-
-//                 // casting float and double into integer
-//                 Value *Cast = nullptr;
-//                 Type *ValueTy =
-//                     Load->getPointerOperandType()->getPointerElementType();
-//                 if (ValueTy->isPointerTy()) {
-//                   continue;
-//                 } else if (ValueTy->isIntegerTy()) {
-//                   Cast = Load;
-//                 } else if (ValueTy->isFloatTy()) {
-//                   Cast = IRB.CreateBitCast(Load, Int32Ty);
-//                 } else if (ValueTy->isDoubleTy()) {
-//                   Cast = IRB.CreateBitCast(Load, Int64Ty);
-//                 }
-
-//                 // bitwidth transformation
-//                 Value *Xor = nullptr;
-//                 if (Cast != nullptr) {
-//                   IntegerType *IntTy = dyn_cast<IntegerType>(Cast->getType());
-//                   unsigned bitwidth = IntTy->getBitWidth();
-//                   if (bitwidth < map_size) {
-//                     Cast = IRB.CreateZExt(
-//                         Cast, IntegerType::getIntNTy(CTX, map_size));
-//                   } else if (bitwidth > map_size) {
-//                     switch (bitwidth) {
-//                     case 64: {
-//                       Value *tmp = IRB.CreateTrunc(Cast, Int16Ty);
-//                       for (int i = 1; i <= 3; ++i) {
-//                         Value *part = IRB.CreateLShr(Cast, 16 * i);
-//                         part = IRB.CreateTrunc(part, Int16Ty);
-//                         tmp = IRB.CreateXor(tmp, part);
-//                       }
-//                       if (map_size > 16)
-//                         tmp = IRB.CreateZExt(tmp, IntMapSizeTy);
-//                       Cast = tmp;
-//                       break;
-//                     }
-//                     case 32: {
-//                       Value *high = IRB.CreateLShr(Cast, 16);
-//                       high = IRB.CreateTrunc(high, Int16Ty);
-//                       Value *low = IRB.CreateTrunc(Cast, Int16Ty);
-//                       Cast = IRB.CreateXor(high, low);
-//                       if (map_size > 16)
-//                         Cast = IRB.CreateZExt(Cast, IntMapSizeTy);
-//                       break;
-//                     }
-//                     default:
-//                       Cast = IRB.CreateTrunc(Cast, IntMapSizeTy);
-//                       break;
-//                     }
-//                   }
-//                   Xor = IRB.CreateXor(Cast, Number);
-
-//                   // other type
-//                 } else {
-//                   Xor = Number;
-//                   outs() << "[pass-log] "
-//                          << "cast part: other type: " << *Load << "\n";
-//                 }
-
-//                 // get map idx
-//                 LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
-//                 Value *Ext = IRB.CreateZExt(Xor, Int32Ty);
-//                 Value *MapPtrIdx = IRB.CreateGEP(MapPtr, Ext);
-
-//                 // update counter
-//                 LoadInst *Counter = IRB.CreateLoad(MapPtrIdx);
-//                 Value *Inc =
-//                     IRB.CreateAdd(Counter, ConstantInt::get(Int8Ty, 1));
-//                 IRB.CreateStore(Inc, MapPtrIdx);
-
-//                 /* log */
-// #ifdef PASS_LOG
-//                 IRBuilder<> IRB2(SI);
-//                 LoadInst *Before = IRB2.CreateLoad(PtrValue);
-//                 LoadInst *After = IRB.CreateLoad(PtrValue);
-
-//                 Type *AfterTy = After->getType();
-//                 Value *Cmp = nullptr;
-//                 Value *FormatStrPtr = nullptr;
-//                 if (AfterTy->isIntegerTy()) {
-//                   Cmp = IRB.CreateICmpNE(Before, After);
-//                   FormatStrPtr = IRB.CreatePointerCast(
-//                       IntFormatStrVar, PrintfArgTy, "IntFormatStr");
-
-//                 } else if (AfterTy->isFloatTy() || AfterTy->isDoubleTy()) {
-//                   Cmp = IRB.CreateFCmpUEQ(Before, After);
-//                   FormatStrPtr = IRB.CreatePointerCast(
-//                       FltFormatStrVar, PrintfArgTy, "FltFormatStr");
-
-//                 } else {
-//                   outs() << "[pass-log] "
-//                          << "log part: other type: " << AfterTy->getTypeID()
-//                          << "\n";
-//                 }
-
-//                 if (Cmp != nullptr && FormatStrPtr != nullptr) {
-//                   Instruction *Split =
-//                       dyn_cast<Instruction>(Cmp)->getNextNonDebugInstruction();
-//                   // outs() << "[pass-log] " << "cmp next inst: " << *Split <<
-//                   // "\n";
-//                   auto *ThenTerm = SplitBlockAndInsertIfThen(
-//                       Cmp, Split, false, nullptr, nullptr, nullptr, nullptr);
-
-//                   IRB.SetInsertPoint(ThenTerm);
-//                   Value *ModuleNamePtr = IRB.CreatePointerCast(
-//                       ModuleNameVar, PrintfArgTy, "ModuleName");
-//                   StringRef VarName = PtrValue->getName();
-//                   VarNameNum++;
-//                   Constant *VarNameStr =
-//                       ConstantDataArray::getString(CTX, VarName.str());
-//                   Constant *VarNameStrVar =
-//                       M.getOrInsertGlobal(".name" + std::to_string(VarNameNum),
-//                                           VarNameStr->getType());
-//                   if (auto *Var = dyn_cast<GlobalVariable>(VarNameStrVar)) {
-//                     if (!Var->hasInitializer())
-//                       Var->setInitializer(VarNameStr);
-//                     Var->setLinkage(GlobalValue::PrivateLinkage);
-//                   }
-//                   Value *VarNameStrPtr =
-//                       IRB.CreatePointerCast(VarNameStrVar, PrintfArgTy);
-
-//                   IRB.CreateCall(Printf,
-//                                  {FormatStrPtr, ModuleNamePtr, VarNameStrPtr,
-//                                   Before, After, Ext, Counter});
-//                 }
-//                 /* log end */
-// #endif
-
-//                 inst_count++;
-//               }
-//             }
-//           }
-//         }
-//         outs() << "function: [" << F.getName() << "] end\n\n";
-//       }
-//       outs() << "file: [" << M.getModuleIdentifier() << "] end\n";
-//       outs() << "=================================================\n";
-
-//       OKF("State-Pass Instrumented %u locations.", inst_count);
-//     }
-//=========================================================================================
+    //                 // update counter
+    //                 LoadInst *Counter = IRB.CreateLoad(MapPtrIdx);
+    //                 Value *Inc =
+    //                     IRB.CreateAdd(Counter, ConstantInt::get(Int8Ty, 1));
+    //                 IRB.CreateStore(Inc, MapPtrIdx);
 
 
-    if (inst_count) {
-      OKF("State-Pass Instrumented %u locations.", inst_count);
-      Instrumented = true;
-    } else {
-      OKF("No instrumentation state variable found.");
+    //                 inst_count++;
+    //               }
+    //             }
+    //           }
+    //         }
+    //         outs() << "function: [" << F.getName() << "] end\n\n";
+    //       }
+    //       outs() << "file: [" << M.getModuleIdentifier() << "] end\n";
+    //       outs() << "=================================================\n";
+
+    //       OKF("State-Pass Instrumented %u locations.", inst_count);
+    //     }
+    //=========================================================================================
+
+    if (is_labyrinth_preprocessing || is_labyrinth_Instrumentation) {
+
+      if (inst_count) {
+        if (is_labyrinth_preprocessing)
+          OKF("State-Pass recognize %u state variables.", inst_count);
+        else {
+          OKF("State-Pass Instrumented %u locations.", inst_count);
+          Instrumented = true;
+        }
+      } else {
+        OKF("No instrumentation state variable found.");
+      }
     }
-    
+
     return Instrumented;
 
   } // runOnModule end

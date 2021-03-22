@@ -252,6 +252,8 @@ static s32 cpu_aff = -1;       	      /* Selected CPU core                */
 
 static FILE* plot_file;               /* Gnuplot output file              */
 
+static FILE* distance_file;           /* distance with time data file     */
+
 struct queue_entry {
 
   u8* fname;                          /* File name for the test case      */
@@ -2231,6 +2233,8 @@ EXP_ST void init_forkserver(char** argv) {
     close(dev_urandom_fd);
     close(fileno(plot_file));
 
+    close(fileno(distance_file));
+
     /* This should improve performance a bit, since it stops the linker from
        doing extra work post-fork(). */
 
@@ -2512,6 +2516,8 @@ static u8 run_target(char** argv, u32 timeout) {
       close(out_dir_fd);
       close(dev_urandom_fd);
       close(fileno(plot_file));
+
+      close(fileno(distance_file));
 
       /* Set sane defaults for ASAN if nothing else specified. */
 
@@ -3809,6 +3815,19 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
 
 }
 
+static void maybe_update_distance_file() {
+
+  static double pre_distance;
+
+  pre_distance = queue_cur->distance;
+
+  fprintf(distance_file,
+          "%llu, %4lf, %4lf, %4lf\n",
+          (get_cur_time() - start_time) / 1000, queue_cur->distance, max_distance, min_distance);
+
+  fflush(distance_file);
+
+}
 
 
 /* A helper function for maybe_delete_out_dir(), deleting all prefixed
@@ -4278,6 +4297,9 @@ static void show_stats(void) {
     maybe_update_plot_file(t_byte_ratio[0], avg_exec);
     #endif
     //maybe_update_plot_file(t_byte_ratio[0], avg_exec);
+
+    /* write distance plot data */
+    maybe_update_distance_file();
  
   }
 
@@ -5139,13 +5161,17 @@ static u32 calculate_score(struct queue_entry* q) {
     }// else WARNF ("Normalized distance negative: %f", normalized_d);
 
   }
+  
 
-  perf_score *= power_factor;
+   perf_score *= power_factor;
 
 
   /* Make sure that we don't go over limit. */
 
   if (perf_score > HAVOC_MAX_MULT * 100) perf_score = HAVOC_MAX_MULT * 100;
+
+  /* AFLGO-DEBUGGING */
+  fprintf(stderr, "\n[Time %llu] q->distance: %4lf, max_distance: %4lf min_distance: %4lf, T: %4.3lf, power_factor: %4.3lf, adjusted perf_score: %4d\n", t, q->distance, max_distance, min_distance, T, power_factor, perf_score);
 
   return perf_score;
 
@@ -7649,6 +7675,16 @@ EXP_ST void setup_dirs_fds(void) {
                      "unique_hangs, max_depth, execs_per_sec\n");
                      /* ignore errors */
 
+  /* distance file */
+  tmp = alloc_printf("%s/distance_file", out_dir);
+  fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (fd < 0) PFATAL("Unable to create '%s'", tmp);
+  ck_free(tmp);
+
+  distance_file = fdopen(fd, "w");
+  if (!plot_file) PFATAL("fdopen() failed");
+
+  fprintf(distance_file, "# unix_time, cur_distance, max_distance, min_distance\n");
 }
 
 
@@ -8621,6 +8657,7 @@ stop_fuzzing:
   }
 
   fclose(plot_file);
+  fclose(distance_file);
   destroy_queue();
   destroy_extras();
   ck_free(target_path);
