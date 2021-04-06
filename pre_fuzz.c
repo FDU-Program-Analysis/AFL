@@ -245,7 +245,7 @@ u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf,
                 move_tail);
         /* TODO: need to update the format file */
         if (remove_pos <= q->len + trim_avail - 1) {
-          delete_block(tree, remove_pos, trim_avail);
+          delete_block(tree, NULL, remove_pos, trim_avail);
         }
 
         /* Let's save a clean trace, which will be needed by

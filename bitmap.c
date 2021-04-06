@@ -542,10 +542,11 @@ u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault, Chunk* tree, T
 
     if(track != NULL) {
       u8 *str;
-      str = "track file";
+      str = track_to_str(track);
       fd = open(track_file, O_WRONLY | O_CREAT | O_EXCL, 0600);
       if (fd < 0) PFATAL("Unable to create '%s'", track_file);
       ck_write(fd, str, strlen(str), track_file);
+      ck_free(str);
       close(fd);
     }
 

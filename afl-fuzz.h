@@ -299,10 +299,9 @@ enum {
   /* 14 */ STAGE_EXTRAS_AO,
   /* 15 */ STAGE_HAVOC,
   /* 16 */ STAGE_SPLICE,
-  /* 17 */ STAGE_CHUNK_DEL,
-  /* 18 */ STAGE_CHUNK_IN,
-  /* 19 */ STAGE_CHUNK_EX,
-  /* 20 */ STAGE_CHUNK_HAVOC
+  /* 17 */ STAGE_STRUCT_HAVOC,
+  /* 18 */ STAGE_STRUCT_DESCRIB,
+  /* 19 */ STAGE_STRUCT_AWARE,
 };
 
 /* Stage value types */
@@ -418,10 +417,11 @@ u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
 /* fuzz_one.c */
 cJSON* parse_json(const u8* format_file);
-void delete_block(Chunk* head, uint32_t delete_from,
+void delete_block(Chunk* head, HashMap map, uint32_t delete_from,
                   uint32_t delete_len);
 cJSON* tree_to_json(Chunk* chunk_head);
 Chunk *json_to_tree(cJSON* json_head);
+uint8_t *track_to_str(Track *track);
 void free_tree(Chunk *tree, Boolean recurse);
 u8 fuzz_one();
 
