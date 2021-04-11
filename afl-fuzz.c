@@ -311,6 +311,7 @@ static double cur_distance = -1.0;     /* Distance of executed input       */
 static double max_distance = -1.0;     /* Maximal distance for any input   */
 static double min_distance = -1.0;     /* Minimal distance for any input   */
 static u32 t_x = 10;                   /* Time to exploitation (Default: 10 min) */
+static u32 performance_score = 0;          /* record perf_score of current queue */
 
 static u8* (*post_handler)(u8* buf, u32* len);
 
@@ -3418,8 +3419,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #ifndef SIMPLE_FILES
 
-    fn = alloc_printf("%s/queue/id:%06u,%s", out_dir, queued_paths,
-                      describe_op(hnb[0]));
+    fn = alloc_printf("%s/queue/id:%06u,%s,score:%04u", out_dir, queued_paths,
+                      describe_op(hnb[0]), performance_score);
 
 #else
 
@@ -3812,20 +3813,6 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
           unique_hangs, max_depth, eps); /* ignore errors */
 
   fflush(plot_file);
-
-}
-
-static void maybe_update_distance_file() {
-
-  static double pre_distance;
-
-  pre_distance = queue_cur->distance;
-
-  fprintf(distance_file,
-          "%llu, %4lf, %4lf, %4lf\n",
-          (get_cur_time() - start_time) / 1000, queue_cur->distance, max_distance, min_distance);
-
-  fflush(distance_file);
 
 }
 
@@ -4297,9 +4284,6 @@ static void show_stats(void) {
     maybe_update_plot_file(t_byte_ratio[0], avg_exec);
     #endif
     //maybe_update_plot_file(t_byte_ratio[0], avg_exec);
-
-    /* write distance plot data */
-    maybe_update_distance_file();
  
   }
 
@@ -5149,7 +5133,8 @@ static u32 calculate_score(struct queue_entry* q) {
   double power_factor = 1.0;
   if (q->distance > 0) {
 
-    double normalized_d = 0; // when "max_distance == min_distance", we set the normalized_d to 0 so that we can sufficiently explore those testcases whose distance >= 0.
+    double normalized_d = 0; // when "max_distance == min_distance", 
+    //we set the normalized_d to 0 so that we can sufficiently explore those testcases whose distance >= 0.
     if (max_distance != min_distance)
       normalized_d = (q->distance - min_distance) / (max_distance - min_distance);
 
@@ -5171,7 +5156,10 @@ static u32 calculate_score(struct queue_entry* q) {
   if (perf_score > HAVOC_MAX_MULT * 100) perf_score = HAVOC_MAX_MULT * 100;
 
   /* AFLGO-DEBUGGING */
-  fprintf(stderr, "\n[Time %llu] q->distance: %4lf, max_distance: %4lf min_distance: %4lf, T: %4.3lf, power_factor: %4.3lf, adjusted perf_score: %4d\n", t, q->distance, max_distance, min_distance, T, power_factor, perf_score);
+  //fprintf(stderr, "[Time %llu] q->distance: %4lf, max_distance: %4lf min_distance: %4lf, T: %4.3lf, power_factor: %4.3lf, adjusted perf_score: %4d\n", t, q->distance, max_distance, min_distance, T, power_factor, perf_score);
+  fprintf(distance_file, "%llu, %4lf, %4lf, %4lf, %4.3lf, %4.3lf, %4d\n", 
+                          t, q->distance, max_distance, min_distance, T, power_factor, perf_score);
+  fflush(distance_file);
 
   return perf_score;
 
@@ -5513,6 +5501,8 @@ static u8 fuzz_one(char** argv) {
    *********************/
 
   orig_perf = perf_score = calculate_score(queue_cur);
+
+  performance_score = perf_score;
 
   /* Skip right away if -d is given, if we have done deterministic fuzzing on
      this entry ourselves (was_fuzzed), or if it has gone through deterministic
@@ -7675,16 +7665,17 @@ EXP_ST void setup_dirs_fds(void) {
                      "unique_hangs, max_depth, execs_per_sec\n");
                      /* ignore errors */
 
-  /* distance file */
+  /* Distance file */
+
   tmp = alloc_printf("%s/distance_file", out_dir);
   fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL, 0600);
   if (fd < 0) PFATAL("Unable to create '%s'", tmp);
   ck_free(tmp);
 
   distance_file = fdopen(fd, "w");
-  if (!plot_file) PFATAL("fdopen() failed");
+  if (!distance_file) PFATAL("fdopen() failed");
 
-  fprintf(distance_file, "# unix_time, cur_distance, max_distance, min_distance\n");
+  fprintf(distance_file, "# Time, q->distance, max_distance, min_distance, T, power_factor, adjusted perf_score\n");
 }
 
 

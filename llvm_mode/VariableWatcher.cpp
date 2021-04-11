@@ -57,6 +57,7 @@ static bool isBlacklisted(const Function *F) {
 }
 
 /* get instruction debug location infomation */
+/* NOTE: the compile flag '-g' must be added, otherwise the getDebugLoc cannot recognize location*/
 static void getDebugLoc(const Instruction *I, std::string &Filename,
                         unsigned &Line) {
   if (DILocation *Loc = I->getDebugLoc()) {
@@ -105,7 +106,67 @@ namespace {
 //----------------------
 struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
-  bool runOnModule(Module &M) {
+  bool isStateInst(Instruction &I, bool &is_transition);
+  void getGroupAndValue(Instruction &I, bool is_transition, std::string &transition, std::string &check);
+  bool runOnModule(Module &M);
+
+  // main entry point
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+    bool Changed = runOnModule(M);
+    return (Changed ? PreservedAnalyses::none() : PreservedAnalyses::all());
+  }
+
+}; // namespace
+
+
+bool VariableWatcher::isStateInst(Instruction &I, bool &is_transition) {
+  bool is_target = false;
+  /* get stateful variable/member label */
+  if (I.getMetadata("labyrinth.label.state_describing.member")) {
+    is_target = true;
+    is_transition = true;
+
+  } else if (I.getMetadata("labyrinth.label.state_describing.variable")) {
+    is_target = true;
+    if (dyn_cast<StoreInst>(&I))
+      is_transition = true;
+    else
+      is_transition = false;
+    
+  } else if (I.getMetadata("labyrinth.label.state_describing.case")) {
+    is_target = true;
+    is_transition = false;
+  }
+  return is_target;
+}
+
+
+void VariableWatcher::getGroupAndValue(Instruction &I, bool is_transition, std::string &transition, std::string &check) {
+  
+  SmallVector<std::pair<unsigned, MDNode*>, 3> Nodes;
+
+  /* get group and value info from metadata */
+  I.getAllMetadataOtherThanDebugLoc(Nodes);
+  auto Node = Nodes[Nodes.size() - 1];
+                
+  if (Node.second->getNumOperands() == 2) {
+    if(MDString *MDS = dyn_cast<MDString>(Node.second->getOperand(0).get())) {
+      if (is_transition)
+        transition = transition + "G" + MDS->getString().str();
+      else
+        check = check + "G" + MDS->getString().str();
+      }
+
+    if(MDString *MDS = dyn_cast<MDString>(Node.second->getOperand(1).get())) {
+      if (is_transition)
+        transition = transition + "V" + MDS->getString().str() + ",";
+      else
+        check = check + "V" + MDS->getString().str() + ",";
+    }
+  }  
+}
+
+bool VariableWatcher::runOnModule(Module &M)   {
 
     unsigned inst_count = 0;
     bool Instrumented = false;
@@ -118,7 +179,6 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
     }
 
     std::map<std::string, int> bb_to_dis;
-    std::vector<std::string> basic_blocks;
 
     if (!OutDirectory.empty()) {
 
@@ -138,7 +198,6 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
               (int)(100.0 * atof(line.substr(pos + 1, line.length()).c_str()));
 
           bb_to_dis.emplace(bb_name, bb_dis);
-          basic_blocks.push_back(bb_name);
         }
         df.close();
         is_labyrinth_Instrumentation = true;
@@ -155,7 +214,6 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
            (is_labyrinth_preprocessing ? "preprocessing"
                                        : "distance instrumentation"));
 
-    /* get label, print CFG and tag target BB */
     if (is_labyrinth_preprocessing) {
 
       std::ofstream bbnames(OutDirectory + "/BBnames.txt",
@@ -182,8 +240,9 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
                << "function: " << F.getName() << "\n";
 
         bool has_BBs = false;
-        std::string funcName = F.getName();
         bool is_target_BB = false;
+
+        std::string funcName = F.getName();
         std::string filename;
 
         for (auto &BB : F) {
@@ -196,8 +255,6 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
           for (auto &I : BB) {
 
             getDebugLoc(&I, filename, line);
-            bool is_target = false;
-            bool is_transition = false; // true for transition, false for check
             
             static const std::string Xlibs("/usr/");
             if (filename.empty() || line == 0 ||
@@ -214,66 +271,16 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
               bb_name = filename + ":" + std::to_string(line);
             }
+            
+            bool is_transition = false; // true for transition, false for check
+            if (isStateInst(I, is_transition)) {
+              outs() << "[debug] StateInst:" << I <<"\n";
 
-            /* get stateful variable/member label */
-            if (I.getMetadata("labyrinth.label.state_describing.member")) {
-              is_target = true;
-              is_transition = true;
-
-              outs() << "[debug]"
-                     << "labyrinth member: " << I << "\n";
-              outs() << "[debug]" << bb_name << "\n";
-
-            } else if (I.getMetadata("labyrinth.label.state_describing.variable")) {
-              is_target = true;
-              if (dyn_cast<StoreInst>(&I))
-                is_transition = true;
-              else
-                is_transition = false;
-
-              outs() << "[debug]"
-                     << "labyrinth variable: " << I << "\n";
-              outs() << "[debug]" << bb_name << "\n";
-
-            } else if (I.getMetadata("labyrinth.label.state_describing.case")) {
-              is_target = true;
-              is_transition = false;
-
-              outs() << "[debug]"
-                     << "labyrinth switch: " << I << "\n";
-              outs() << "[debug]" << bb_name << "\n";
-
-            }
-
-
-            /* write target BB's name */
-            if (is_target) {
               inst_count++;
               bbtargets << bb_name << "\n";
               is_target_BB = true;
 
-              SmallVector<std::pair<unsigned, MDNode*>, 3> Nodes;
-
-              /* get group and value info from metadata */
-              I.getAllMetadataOtherThanDebugLoc(Nodes);
-                auto Node = Nodes[Nodes.size() - 1];
-                if (Node.second->getNumOperands() == 2) {
-                  if(MDString *MDS = dyn_cast<MDString>(Node.second->getOperand(0).get())) {
-                    if (is_transition)
-                      transition = transition + "G" + MDS->getString().str();
-                    else
-                      check = check + "G" + MDS->getString().str();
-                  }
-
-                  if(MDString *MDS = dyn_cast<MDString>(Node.second->getOperand(1).get())) {
-                    if (is_transition)
-                      transition = transition + "V" + MDS->getString().str() + ",";
-                    else
-                      check = check + "V" + MDS->getString().str() + ",";
-                  }
-
-                }
-
+              getGroupAndValue(I, is_transition, transition, check);
             }
 
             /* record call site */
@@ -350,8 +357,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
       }
       outs() << "[debug]"
              << "---------------- file end ----------------"
-             << "\n";
-      outs() << "\n";
+             << "\n\n";
 
       /* Instrumentation for distance */
     } else if (is_labyrinth_Instrumentation) {
@@ -698,6 +704,7 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
           OKF("State-Pass Instrumented %u locations.", inst_count);
           Instrumented = true;
         }
+
       } else {
         OKF("No instrumentation state variable found.");
       }
@@ -707,13 +714,6 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
   } // runOnModule end
 
-  // main entry point
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
-    bool Changed = runOnModule(M);
-
-    return (Changed ? PreservedAnalyses::none() : PreservedAnalyses::all());
-  }
-}; // namespace
 
 //-------------------------
 // Legacy PM implementation
