@@ -107,7 +107,9 @@ namespace {
 struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
   bool isStateInst(Instruction &I, bool &is_transition);
+
   void getGroupAndValue(Instruction &I, bool is_transition, std::string &transition, std::string &check);
+  
   bool runOnModule(Module &M);
 
   // main entry point
@@ -232,6 +234,8 @@ bool VariableWatcher::runOnModule(Module &M)   {
         FATAL("Could not create directory %s", dotfiles.c_str());
       }
 
+      std::map<std::string, int> bb_and_counter;
+
       outs() << "[debug]"
              << "file: " << M.getModuleIdentifier() << "\n";
       for (auto &F : M) {
@@ -249,8 +253,11 @@ bool VariableWatcher::runOnModule(Module &M)   {
 
           std::string bb_name("");
           unsigned line;
+
           std::string transition("");
           std::string check("");
+
+          std::vector<std::string> callees;
 
           for (auto &I : BB) {
 
@@ -270,6 +277,14 @@ bool VariableWatcher::runOnModule(Module &M)   {
               }
 
               bb_name = filename + ":" + std::to_string(line);
+
+              if (bb_and_counter.find(bb_name) == bb_and_counter.end()) {
+                bb_and_counter.emplace(bb_name, 0);
+
+              } else {
+                int count = bb_and_counter[bb_name];
+                bb_and_counter[bb_name] = ++count;
+              }
             }
             
             bool is_transition = false; // true for transition, false for check
@@ -277,7 +292,6 @@ bool VariableWatcher::runOnModule(Module &M)   {
               outs() << "[debug] StateInst:" << I <<"\n";
 
               inst_count++;
-              bbtargets << bb_name << "\n";
               is_target_BB = true;
 
               getGroupAndValue(I, is_transition, transition, check);
@@ -293,8 +307,9 @@ bool VariableWatcher::runOnModule(Module &M)   {
 
               if (auto *CalledFunc = CI->getCalledFunction()) {
                 if (!isBlacklisted(CalledFunc)) {
-                  bbcalls << bb_name << "," << CalledFunc->getName().str()
-                          << "\n";
+                  // bbcalls << bb_name << "," << CalledFunc->getName().str()
+                  //         << "\n";
+                  callees.push_back(CalledFunc->getName().str());
                 }
               }
             }
@@ -302,16 +317,27 @@ bool VariableWatcher::runOnModule(Module &M)   {
 
           /* set BB name */
           if (!bb_name.empty()) {
-
-            BB.setName(bb_name + ":");
+            
+            BB.setName(bb_name + "_" + std::to_string(bb_and_counter[bb_name]) + ":");
+            
             if (!BB.hasName()) {
-              std::string newname = bb_name + ":";
+              std::string newname = bb_name + "_" + std::to_string(bb_and_counter[bb_name]) + ":";
               Twine t(newname);
               SmallString<256> NameData;
               StringRef NameRef = t.toStringRef(NameData);
               BB.setValueName(ValueName::Create(NameRef));
             }
-            
+
+            if (!callees.empty()) {
+              for (int i = 0; i < callees.size(); i++) {
+                bbcalls << BB.getName().str() << "," << callees[i] << "\n";
+              }
+            }
+
+            if (is_target_BB) {
+              bbtargets << BB.getName().str() << "\n";
+            }
+
             if (!transition.empty()) {
               transition = "transition:" + transition;
               transition.pop_back();
@@ -330,6 +356,8 @@ bool VariableWatcher::runOnModule(Module &M)   {
             bbnames << BB.getName().str() << "\n";
             has_BBs = true;
           }
+
+          outs() << "BBname: " << BB.getName() << "\n";
         }
 
         /* print CFG */
@@ -425,6 +453,8 @@ bool VariableWatcher::runOnModule(Module &M)   {
 
       outs() << "[debug]"
              << "file: " << M.getModuleIdentifier() << "\n";
+
+      std::map<std::string, int> bb_and_counter;
       for (auto &F : M) {
 
         int distance = -1;
@@ -449,11 +479,20 @@ bool VariableWatcher::runOnModule(Module &M)   {
             }
 
             bb_name = filename + ":" + std::to_string(line);
+
+            if (bb_and_counter.find(bb_name) == bb_and_counter.end()) {
+                bb_and_counter.emplace(bb_name, 0);
+              } else {
+                int count = bb_and_counter[bb_name];
+                bb_and_counter[bb_name] = ++count;
+              }
+
             break;
           }
 
           /* find BB's distance */
           if (!bb_name.empty()) {
+            bb_name = bb_name + "_" + std::to_string(bb_and_counter[bb_name]);
             std::map<std::string, int>::iterator it;
             for (it = bb_to_dis.begin(); it != bb_to_dis.end(); ++it) {
               if (it->first.compare(bb_name) == 0) {
