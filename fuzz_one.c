@@ -1970,7 +1970,7 @@ void struct_aware_stage(char **argv, u8 *buf, u32 len, Chunk *tree,
     }
     /* add to length field */
     for (i = 0; i <= 36; i += 2) {
-      if (i > out_len) {
+      if (i >= out_len) {
         break;
       }
       meta_chunk = map->get(map, length_iter->id1);
@@ -2112,7 +2112,7 @@ void struct_aware_stage(char **argv, u8 *buf, u32 len, Chunk *tree,
       free_tree(out_tree, True);
       out_tree = chunk_duplicate(tree, True);
       map->clear(map);
-      ck_free(map);
+      free(map);
       map = createHashMap(NULL, NULL);
       tree_add_map(out_tree->son, map);
     }
@@ -3642,7 +3642,6 @@ havoc_stage:
 
           /* Update format file */
           insert_block(out_tree, insert_at, extra_len);
-
           break;
         }
       }
