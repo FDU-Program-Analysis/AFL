@@ -215,7 +215,7 @@ int __afl_persistent_loop(unsigned int max_cnt) {
     if (is_persistent) {
 
       memset(__afl_area_ptr, 0, MAP_SIZE + 16);
-      memset(__state_map_ptr, 0, MAP_SIZE);
+      memset(__state_map_ptr, 0, MAX_SEQ_WIN);
       __afl_area_ptr[0] = 1;
       __state_map_ptr[0] = 1;
       __afl_prev_loc = 0;
@@ -297,7 +297,7 @@ __attribute__((constructor(CONST_PRIO))) void __afl_auto_init(void) {
 
 void __sanitizer_cov_trace_pc_guard(uint32_t* guard) {
   __afl_area_ptr[*guard]++;
-  __state_map_ptr[*guard]++;
+//  __state_map_ptr[*guard]++;
 }
 
 

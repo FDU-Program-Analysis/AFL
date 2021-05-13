@@ -25,9 +25,20 @@
 #include <fstream>
 #include <iostream>
 #include <unordered_set>
+#include <string>
 
 //#define PASS_LOG
 using namespace llvm;
+
+/* stateful variable type */
+typedef enum {
+  TRANSITION,
+  BR,
+  SWITCH
+} STATE_TYPE;
+
+/* group and value */
+typedef std::pair<unsigned, unsigned> GV;
 
 /* parsing params */
 cl::opt<std::string> OutDirectory(
@@ -36,10 +47,10 @@ cl::opt<std::string> OutDirectory(
         "Output directory contains Ftargets.txtm Fnames.txt and BBnames.txt."),
     cl::value_desc("outdir"));
 
-cl::opt<std::string> DistanceFile(
-    "distance",
-    cl::desc("Distance file containing distance of each BB to targets."),
-    cl::value_desc("distance"));
+cl::opt<std::string> CFGFile(
+    "cfg",
+    cl::desc("control flow graph of the program need to be instrumented."),
+    cl::value_desc("cfg"));
 
 /* some function need to be skip */
 static bool isBlacklisted(const Function *F) {
@@ -106,10 +117,12 @@ namespace {
 //----------------------
 struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 
-  bool isStateInst(Instruction &I, bool &is_transition);
+  bool isStateInst(Instruction &I, STATE_TYPE &stateType);
 
-  void getGroupAndValue(Instruction &I, bool is_transition, std::string &transition, std::string &check);
+  void getGroupAndValue(Instruction &I, STATE_TYPE stateType, std::vector<GV> &GroupValue);
   
+  std::string addStateSuffix(std::string bb, std::vector<GV> &tran, std::vector<GV> &check);
+
   bool runOnModule(Module &M);
 
   // main entry point
@@ -121,51 +134,105 @@ struct VariableWatcher : PassInfoMixin<VariableWatcher> {
 }; // namespace
 
 
-bool VariableWatcher::isStateInst(Instruction &I, bool &is_transition) {
+bool VariableWatcher::isStateInst(Instruction &I, STATE_TYPE &stateType) {
   bool is_target = false;
   /* get stateful variable/member label */
   if (I.getMetadata("labyrinth.label.state_describing.member")) {
     is_target = true;
-    is_transition = true;
+    stateType = TRANSITION;
 
   } else if (I.getMetadata("labyrinth.label.state_describing.variable")) {
     is_target = true;
     if (dyn_cast<StoreInst>(&I))
-      is_transition = true;
+      stateType = TRANSITION;
     else
-      is_transition = false;
+      stateType = BR;
     
   } else if (I.getMetadata("labyrinth.label.state_describing.case")) {
     is_target = true;
-    is_transition = false;
+    stateType = SWITCH;
   }
   return is_target;
 }
 
 
-void VariableWatcher::getGroupAndValue(Instruction &I, bool is_transition, std::string &transition, std::string &check) {
+void VariableWatcher::getGroupAndValue(Instruction &I, STATE_TYPE stateType, std::vector<GV> &GroupValue) {
   
   SmallVector<std::pair<unsigned, MDNode*>, 3> Nodes;
 
   /* get group and value info from metadata */
   I.getAllMetadataOtherThanDebugLoc(Nodes);
   auto Node = Nodes[Nodes.size() - 1];
-                
-  if (Node.second->getNumOperands() == 2) {
-    if(MDString *MDS = dyn_cast<MDString>(Node.second->getOperand(0).get())) {
-      if (is_transition)
-        transition = transition + "G" + MDS->getString().str();
-      else
-        check = check + "G" + MDS->getString().str();
+
+  switch (stateType)
+  {
+  case SWITCH:
+    for (int i = 0; i < Node.second->getNumOperands(); i++) {
+      if (MDNode *MDN = dyn_cast<MDNode>(Node.second->getOperand(i).get())) {
+        if (MDN->getNumOperands() == 2) {
+          unsigned group, value;
+          if (MDString *MDS = dyn_cast<MDString>(MDN->getOperand(0).get())) {
+            group = std::stoi(MDS->getString().str());
+          }
+
+          if (MDString *MDS = dyn_cast<MDString>(MDN->getOperand(1).get())) {
+            value = std::stoi(MDS->getString().str());
+          }
+          GroupValue.push_back(GV(group, value));
+        }
+      }
+    }  
+    break;
+
+  case TRANSITION:
+  case BR:
+    if (Node.second->getNumOperands() == 2) {
+      unsigned group, value;
+      if (MDString *MDS = dyn_cast<MDString>(Node.second->getOperand(0).get())) {
+        group = std::stoi(MDS->getString().str());
       }
 
-    if(MDString *MDS = dyn_cast<MDString>(Node.second->getOperand(1).get())) {
-      if (is_transition)
-        transition = transition + "V" + MDS->getString().str() + ",";
-      else
-        check = check + "V" + MDS->getString().str() + ",";
+      if (MDString *MDS = dyn_cast<MDString>(Node.second->getOperand(1).get())) {
+        value = std::stoi(MDS->getString().str());
+      }
+      GroupValue.push_back(GV(group, value));
     }
-  }  
+    break;
+
+  default:
+    outs() << "[debug]" << "other type in [getGroupAndValue]\n";
+    break;
+  }
+
+}
+
+std::string VariableWatcher::addStateSuffix(std::string bb, std::vector<GV> &tran, std::vector<GV> &check) {
+  std::string tmpstr = bb;
+  if (!tran.empty()) {
+    outs() << "[debug] " << "transition: ";
+    tmpstr += ":tran:";
+    int size = tran.size();
+    for (int i = 0; i < size; i++) {
+      outs() << "G" << tran[i].first << "V" << tran[i].second << " ";
+      tmpstr += "G" + std::to_string(tran[i].first) + "V" + std::to_string(tran[i].second) + ","; 
+    }
+      tmpstr.pop_back();
+      outs() << "\n";
+  }
+
+  if (!check.empty()) {
+    outs() << "[debug] " << "check: ";
+    tmpstr += ":check:";
+    int size = check.size();
+    for (int i = 0; i < size; i++) {
+      outs() << "G" << check[i].first << "V" << check[i].second << " ";
+      tmpstr += "G" + std::to_string(check[i].first) + "V" + std::to_string(check[i].second) + ",";
+    }
+    tmpstr.pop_back();
+    outs() << "\n";
+}
+  tmpstr += ":";
+  return tmpstr;
 }
 
 bool VariableWatcher::runOnModule(Module &M)   {
@@ -175,37 +242,38 @@ bool VariableWatcher::runOnModule(Module &M)   {
     bool is_labyrinth_preprocessing = false;
     bool is_labyrinth_Instrumentation = false;
 
-    if (!OutDirectory.empty() && !DistanceFile.empty()) {
+    if (!OutDirectory.empty() && !CFGFile.empty()) {
       FATAL("Cannot specify both '-outdir' and '-distance'!");
       return false;
     }
 
-    std::map<std::string, int> bb_to_dis;
+    std::map<std::string, int> bb_to_node;
 
     if (!OutDirectory.empty()) {
 
       is_labyrinth_preprocessing = true;
 
-    } else if (!DistanceFile.empty()) {
+    } else if (!CFGFile.empty()) {
 
-      std::ifstream df(DistanceFile);
-      if (df.is_open()) {
+      std::ifstream cfg(CFGFile);
+      if (cfg.is_open()) {
 
         std::string line;
-        while (getline(df, line)) {
+        while (getline(cfg, line)) {
+          if (line.find("[label") != std::string::npos) {
+            std::string nodeID = line.substr(4, line.find(" ")-4);
+            std::string nodeName = line.substr(line.find("{")+1, line.find("}")-line.find("{")-1);
+            outs() << "nodeId " << nodeID << " label: " << nodeName  << "\n";
 
-          std::size_t pos = line.find(",");
-          std::string bb_name = line.substr(0, pos);
-          int bb_dis =
-              (int)(100.0 * atof(line.substr(pos + 1, line.length()).c_str()));
-
-          bb_to_dis.emplace(bb_name, bb_dis);
+            int ID = std::stoi(nodeID, 0, 16);
+            bb_to_node.emplace(nodeName, ID);
+          }
         }
-        df.close();
+        cfg.close();
         is_labyrinth_Instrumentation = true;
 
       } else {
-        FATAL("Unable to find %s.", DistanceFile.c_str());
+        FATAL("Unable to find %s.", CFGFile.c_str());
         return false;
       }
     }
@@ -234,17 +302,14 @@ bool VariableWatcher::runOnModule(Module &M)   {
         FATAL("Could not create directory %s", dotfiles.c_str());
       }
 
-      std::map<std::string, int> bb_and_counter;
 
-      outs() << "[debug]"
-             << "file: " << M.getModuleIdentifier() << "\n";
+      outs() << "file: " << M.getModuleIdentifier() << "\n";
       for (auto &F : M) {
 
-        outs() << "[debug]"
-               << "function: " << F.getName() << "\n";
+        outs() << "function: " << F.getName() << "\n";
 
         bool has_BBs = false;
-        bool is_target_BB = false;
+        bool is_target_func = false;
 
         std::string funcName = F.getName();
         std::string filename;
@@ -253,9 +318,10 @@ bool VariableWatcher::runOnModule(Module &M)   {
 
           std::string bb_name("");
           unsigned line;
+          bool is_target_BB = false;
 
-          std::string transition("");
-          std::string check("");
+          std::vector<GV> transition;
+          std::vector<GV> check;
 
           std::vector<std::string> callees;
 
@@ -266,6 +332,7 @@ bool VariableWatcher::runOnModule(Module &M)   {
             static const std::string Xlibs("/usr/");
             if (filename.empty() || line == 0 ||
                 !filename.compare(0, Xlibs.size(), Xlibs)) {
+              //outs() << "no location\n";
               continue;
             }
 
@@ -277,24 +344,16 @@ bool VariableWatcher::runOnModule(Module &M)   {
               }
 
               bb_name = filename + ":" + std::to_string(line);
-
-              if (bb_and_counter.find(bb_name) == bb_and_counter.end()) {
-                bb_and_counter.emplace(bb_name, 0);
-
-              } else {
-                int count = bb_and_counter[bb_name];
-                bb_and_counter[bb_name] = ++count;
-              }
             }
             
-            bool is_transition = false; // true for transition, false for check
-            if (isStateInst(I, is_transition)) {
+            STATE_TYPE state_type;
+            if (isStateInst(I, state_type)) {
               outs() << "[debug] StateInst:" << I <<"\n";
 
               inst_count++;
               is_target_BB = true;
 
-              getGroupAndValue(I, is_transition, transition, check);
+              getGroupAndValue(I, state_type, (state_type == TRANSITION ? transition : check));
             }
 
             /* record call site */
@@ -307,21 +366,20 @@ bool VariableWatcher::runOnModule(Module &M)   {
 
               if (auto *CalledFunc = CI->getCalledFunction()) {
                 if (!isBlacklisted(CalledFunc)) {
-                  // bbcalls << bb_name << "," << CalledFunc->getName().str()
-                  //         << "\n";
                   callees.push_back(CalledFunc->getName().str());
                 }
               }
             }
+
           }
 
           /* set BB name */
           if (!bb_name.empty()) {
-            
-            BB.setName(bb_name + "_" + std::to_string(bb_and_counter[bb_name]) + ":");
+            bb_name = addStateSuffix(bb_name, transition, check);
+            BB.setName(bb_name);
             
             if (!BB.hasName()) {
-              std::string newname = bb_name + "_" + std::to_string(bb_and_counter[bb_name]) + ":";
+              std::string newname = bb_name;
               Twine t(newname);
               SmallString<256> NameData;
               StringRef NameRef = t.toStringRef(NameData);
@@ -336,22 +394,9 @@ bool VariableWatcher::runOnModule(Module &M)   {
 
             if (is_target_BB) {
               bbtargets << BB.getName().str() << "\n";
+              is_target_func = true;
             }
 
-            if (!transition.empty()) {
-              transition = "transition:" + transition;
-              transition.pop_back();
-              outs() << "[debug]" << transition << "\n";
-            }
-
-            if (!check.empty()) {
-              check = "check:" + check;
-              check.pop_back();
-              outs() << "[debug]" << check << "\n";
-            }
-
-            // std::string suffix = transition + ":" + check; 
-            // BB.setName(BB.getName().str() + suffix);
 
             bbnames << BB.getName().str() << "\n";
             has_BBs = true;
@@ -373,18 +418,16 @@ bool VariableWatcher::runOnModule(Module &M)   {
           }
 
           /* write name of function which BB belongs */
-          if (is_target_BB) {
+          if (is_target_func) {
             ftargets << funcName << "\n";
           }
 
           fnames << funcName << "\n";
         }
-        outs() << "[debug]"
-               << "------------- function end -------------"
+        outs() << "------------- function end -------------"
                << "\n";
       }
-      outs() << "[debug]"
-             << "---------------- file end ----------------"
+      outs() << "---------------- file end ----------------"
              << "\n\n";
 
       /* Instrumentation for distance */
@@ -406,11 +449,14 @@ bool VariableWatcher::runOnModule(Module &M)   {
 #endif
 
       ConstantInt *MapDistLoc = ConstantInt::get(LargestType, MAP_SIZE);
-      ConstantInt *One = ConstantInt::get(LargestType, 1);
+      
 
-      /* get SHM region in AFL, and the distance and counter located behind the
-       * AFLMapPtr */
-      GlobalVariable *AFLMapPtr = M.getGlobalVariable("__afl_area_ptr");
+      GlobalVariable *LabyStatePtr = 
+        new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
+                           GlobalValue::ExternalLinkage, 0, "__state_map_ptr");
+
+      ConstantInt *One = ConstantInt::get(Int32Ty, 1);
+      ConstantInt *SeqLoc = ConstantInt::get(Int32Ty, 4);
 
 #ifdef PASS_LOG
         /* printf function */
@@ -451,18 +497,14 @@ bool VariableWatcher::runOnModule(Module &M)   {
 #endif
 
 
-      outs() << "[debug]"
-             << "file: " << M.getModuleIdentifier() << "\n";
+      outs() << "file: " << M.getModuleIdentifier() << "\n";
 
-      std::map<std::string, int> bb_and_counter;
       for (auto &F : M) {
-
-        int distance = -1;
 
         for (auto &BB : F) {
 
-          distance = -1;
           std::string bb_name;
+          std::vector<GV> transition, check;
 
           for (auto &I : BB) {
 
@@ -470,35 +512,30 @@ bool VariableWatcher::runOnModule(Module &M)   {
             unsigned line;
 
             getDebugLoc(&I, filename, line);
-            if (filename.empty() || line == 0)
+            if (filename.empty() || line == 0) {
               continue;
-
-            std::size_t found = filename.find_last_of("/\\");
-            if (found != std::string::npos) {
-              filename = filename.substr(found + 1);
             }
 
-            bb_name = filename + ":" + std::to_string(line);
-
-            if (bb_and_counter.find(bb_name) == bb_and_counter.end()) {
-                bb_and_counter.emplace(bb_name, 0);
-              } else {
-                int count = bb_and_counter[bb_name];
-                bb_and_counter[bb_name] = ++count;
+            if (bb_name.empty()) {
+              std::size_t found = filename.find_last_of("/\\");
+              if (found != std::string::npos) {
+                filename = filename.substr(found + 1);
               }
 
-            break;
-          }
+              bb_name = filename + ":" + std::to_string(line);
+              outs() << bb_name << "\n";
+            }
 
-          /* find BB's distance */
+            STATE_TYPE state_type;
+            if (isStateInst(I, state_type)) {
+              getGroupAndValue(I, state_type, (state_type == TRANSITION ? transition : check));
+            }
+
+          } // end I
+          
           if (!bb_name.empty()) {
-            bb_name = bb_name + "_" + std::to_string(bb_and_counter[bb_name]);
-            std::map<std::string, int>::iterator it;
-            for (it = bb_to_dis.begin(); it != bb_to_dis.end(); ++it) {
-              if (it->first.compare(bb_name) == 0) {
-                distance = it->second;
-              }
-            }
+            bb_name = addStateSuffix(bb_name, transition, check);
+            outs() << bb_name << "\n";
           }
 
           BasicBlock::iterator IP = BB.getFirstInsertionPt();
@@ -510,229 +547,45 @@ bool VariableWatcher::runOnModule(Module &M)   {
           IRB.CreateCall(Printf, {BBNameFormatStrPtr, BBNameStrPtr});
 #endif
 
-          if (distance > 0) {
-
-            outs() << "[debug]" << "BB name: " << bb_name 
-                   << " distance: " << distance << "\n";
-
-            ConstantInt *Distance =
-                ConstantInt::get(LargestType, (unsigned)distance);
-
-            /* add distance to shm[MAP_SIZE] */
-            LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
-            Value *MapDistPtr = IRB.CreateBitCast(
-                IRB.CreateGEP(MapPtr, MapDistLoc), LargestType->getPointerTo());
-            LoadInst *MapDist = IRB.CreateLoad(MapDistPtr);
-            MapDist->setMetadata(M.getMDKindID("nosanitize"),
-                                 MDNode::get(CTX, None));
-
-            Value *IncDist = IRB.CreateAdd(MapDist, Distance);
-            IRB.CreateStore(IncDist, MapDistPtr)
-                ->setMetadata(M.getMDKindID("nosanitize"),
-                              MDNode::get(CTX, None));
-
-            /* increase count at shm[MAP_SIZE + 4 or 8] */
-            Value *MapCntPtr = IRB.CreateBitCast(
-                IRB.CreateGEP(MapPtr, MapCntLoc), LargestType->getPointerTo());
-            LoadInst *MapCnt = IRB.CreateLoad(MapCntPtr);
-            MapCnt->setMetadata(M.getMDKindID("nosanitize"),
-                                MDNode::get(CTX, None));
-
-            Value *IncCnt = IRB.CreateAdd(MapCnt, One);
-            IRB.CreateStore(IncCnt, MapCntPtr)
-                ->setMetadata(M.getMDKindID("nosanitize"),
-                              MDNode::get(CTX, None));
 #ifdef PASS_LOG
             /* print runtime log */
             Value *FormatStrPtr = IRB.CreateBitCast(FormatStrVar, PrintfArgTy, "FormatStr");
             IRB.CreateCall(Printf,{FormatStrPtr, MapDist, MapCnt});
 
 #endif
+
+          if (!transition.empty() || !check.empty())  {
+
+            /* Load the state shm base address, need to convert int8 to int32 first */
+            LoadInst *StatePtr = IRB.CreateLoad(LabyStatePtr);
+
+            /* Load counter */
+            Value *CntPtr = IRB.CreateBitCast(StatePtr, Int32Ty->getPointerTo());
+            LoadInst *Cnt = IRB.CreateLoad(CntPtr);
+            Cnt->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(CTX, None));
+
+            /* Increase the counter */
+            Value *IncrCnt = IRB.CreateAdd(Cnt, One);
+            Value *NewCnt = IRB.CreateSRem(IncrCnt, ConstantInt::get(Int32Ty, MAX_SEQ_WIN));
+            IRB.CreateStore(NewCnt, CntPtr)
+              ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(CTX, None));
+
+            /* update the node id to state[cnt % SIZE] */
+            Value *SeqIdx = IRB.CreateAdd(SeqLoc, IRB.CreateMul(ConstantInt::get(Int32Ty, 4), NewCnt));
+            Value *SeqPtr = IRB.CreateBitCast(IRB.CreateGEP(StatePtr, SeqIdx), Int32Ty->getPointerTo());            
+            int id = bb_to_node.find(bb_name)->second;
+            ConstantInt *NodeID = ConstantInt::get(Int32Ty, id);
+            IRB.CreateStore(NodeID, SeqPtr)
+              ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(CTX, None));
+
             inst_count++;
           }
-        }
+        
+        } // end BB
       }
 
-      outs() << "[debug]"
-             << "Instrumented " << inst_count << " locations\n";
+      outs() << "Instrumented " << inst_count << " locations\n";
     }
-    //===================================================================================
-
-    //     unsigned VarNameNum = 0;
-    //     bool Instrumented = false;
-    //     auto &CTX = M.getContext();
-
-    //     IntegerType *Int8Ty = IntegerType::getInt8Ty(CTX);
-    //     IntegerType *Int16Ty = IntegerType::getInt16Ty(CTX);
-    //     IntegerType *Int32Ty = IntegerType::getInt32Ty(CTX);
-    //     IntegerType *Int64Ty = IntegerType::getInt64Ty(CTX);
-    //     IntegerType *IntMapSizeTy = IntegerType::getIntNTy(CTX,
-    //     MAP_SIZE_POW2);
-
-
-    //     } else {
-    //       /* traversal */
-    //       outs() << "file: [" << M.getModuleIdentifier() << "]\n";
-    //       for (auto &F : M) {
-
-    //         outs() << "function: [" << F.getName() << "]\n";
-    //         for (auto &BB : F) {
-
-    //           for (auto &I : BB) {
-    //             if (auto *SI = dyn_cast<StoreInst>(&I)) {
-    //               bool IsMember = false;
-    //               bool IsVariable = false;
-    //               Value *PtrValue = SI->getPointerOperand();
-    //               unsigned map_size = MAP_SIZE_POW2;
-    //               unsigned int Num;
-    //               ConstantInt *Number = nullptr;
-
-    //               if
-    //               (SI->getMetadata("labyrinth.label.state_describing.member"))
-    //               {
-    //                 IsMember = true;
-    //                 StringRef MemName = PtrValue->getName();
-    //                 // outs() << "member: " << MemName << "\n";
-
-    //                 // trim member variable number
-    //                 size_t len = MemName.size();
-    //                 for (size_t i = 0; i < len; ++i) {
-    //                   if (isDigit(MemName[i])) {
-    //                     MemName = MemName.take_front(i);
-    //                     // outs() << "trim name: " << MemName << "\n";
-    //                     break;
-    //                   }
-    //                 }
-
-    //                 if (MemberSet.count(MemName)) {
-    //                   Num = MemberSet.at(MemName);
-    //                   outs() << "member: " << Num << " name:" << MemName <<
-    //                   "\n";
-    //                 } else {
-    //                   Num = AFL_R(MAP_SIZE);
-    //                   MemberSet.insert(
-    //                       std::pair<StringRef, unsigned int>(MemName, Num));
-    //                   outs() << "first member: " << Num << " name: " <<
-    //                   MemName
-    //                          << "\n";
-    //                 }
-    //                 Number = ConstantInt::get(IntMapSizeTy, Num);
-    //               }
-
-    //               if (SI->getMetadata(
-    //                       "labyrinth.label.state_describing.variable")) {
-    //                 IsVariable = true;
-    //                 if (IsMember) {
-    //                   outs() << "Both error\n";
-    //                 }
-
-    //                 // get variable number
-    //                 StringRef VarName = PtrValue->getName();
-    //                 if (VariableSet.count(PtrValue)) {
-    //                   Num = VariableSet.at(PtrValue);
-    //                   outs() << "var: " << Num << " name: " << VarName <<
-    //                   "\n";
-    //                 } else {
-    //                   Num = AFL_R(MAP_SIZE);
-    //                   VariableSet.insert(
-    //                       std::pair<Value *, unsigned int>(PtrValue, Num));
-    //                   outs() << "first var: " << Num << " name: " << VarName
-    //                          << "\n";
-    //                 }
-    //                 Number = ConstantInt::get(IntMapSizeTy, Num);
-    //               }
-
-    //               if (IsMember || IsVariable) {
-
-    //                 // instrumentation
-    //                 IRBuilder<> IRB(SI->getNextNonDebugInstruction());
-    //                 LoadInst *Load = IRB.CreateLoad(PtrValue);
-
-    //                 // casting float and double into integer
-    //                 Value *Cast = nullptr;
-    //                 Type *ValueTy =
-    //                     Load->getPointerOperandType()->getPointerElementType();
-    //                 if (ValueTy->isPointerTy()) {
-    //                   continue;
-    //                 } else if (ValueTy->isIntegerTy()) {
-    //                   Cast = Load;
-    //                 } else if (ValueTy->isFloatTy()) {
-    //                   Cast = IRB.CreateBitCast(Load, Int32Ty);
-    //                 } else if (ValueTy->isDoubleTy()) {
-    //                   Cast = IRB.CreateBitCast(Load, Int64Ty);
-    //                 }
-
-    //                 // bitwidth transformation
-    //                 Value *Xor = nullptr;
-    //                 if (Cast != nullptr) {
-    //                   IntegerType *IntTy =
-    //                   dyn_cast<IntegerType>(Cast->getType()); unsigned
-    //                   bitwidth = IntTy->getBitWidth(); if (bitwidth <
-    //                   map_size) {
-    //                     Cast = IRB.CreateZExt(
-    //                         Cast, IntegerType::getIntNTy(CTX, map_size));
-    //                   } else if (bitwidth > map_size) {
-    //                     switch (bitwidth) {
-    //                     case 64: {
-    //                       Value *tmp = IRB.CreateTrunc(Cast, Int16Ty);
-    //                       for (int i = 1; i <= 3; ++i) {
-    //                         Value *part = IRB.CreateLShr(Cast, 16 * i);
-    //                         part = IRB.CreateTrunc(part, Int16Ty);
-    //                         tmp = IRB.CreateXor(tmp, part);
-    //                       }
-    //                       if (map_size > 16)
-    //                         tmp = IRB.CreateZExt(tmp, IntMapSizeTy);
-    //                       Cast = tmp;
-    //                       break;
-    //                     }
-    //                     case 32: {
-    //                       Value *high = IRB.CreateLShr(Cast, 16);
-    //                       high = IRB.CreateTrunc(high, Int16Ty);
-    //                       Value *low = IRB.CreateTrunc(Cast, Int16Ty);
-    //                       Cast = IRB.CreateXor(high, low);
-    //                       if (map_size > 16)
-    //                         Cast = IRB.CreateZExt(Cast, IntMapSizeTy);
-    //                       break;
-    //                     }
-    //                     default:
-    //                       Cast = IRB.CreateTrunc(Cast, IntMapSizeTy);
-    //                       break;
-    //                     }
-    //                   }
-    //                   Xor = IRB.CreateXor(Cast, Number);
-
-    //                   // other type
-    //                 } else {
-    //                   Xor = Number;
-    //                   outs() << "[pass-log] "
-    //                          << "cast part: other type: " << *Load << "\n";
-    //                 }
-
-    //                 // get map idx
-    //                 LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
-    //                 Value *Ext = IRB.CreateZExt(Xor, Int32Ty);
-    //                 Value *MapPtrIdx = IRB.CreateGEP(MapPtr, Ext);
-
-    //                 // update counter
-    //                 LoadInst *Counter = IRB.CreateLoad(MapPtrIdx);
-    //                 Value *Inc =
-    //                     IRB.CreateAdd(Counter, ConstantInt::get(Int8Ty, 1));
-    //                 IRB.CreateStore(Inc, MapPtrIdx);
-
-
-    //                 inst_count++;
-    //               }
-    //             }
-    //           }
-    //         }
-    //         outs() << "function: [" << F.getName() << "] end\n\n";
-    //       }
-    //       outs() << "file: [" << M.getModuleIdentifier() << "] end\n";
-    //       outs() << "=================================================\n";
-
-    //       OKF("State-Pass Instrumented %u locations.", inst_count);
-    //     }
-    //=========================================================================================
 
     if (is_labyrinth_preprocessing || is_labyrinth_Instrumentation) {
 

@@ -158,7 +158,7 @@ static void edit_params(u32 argc, char** argv) {
     u8* cur = *(++argv);
 
     /* pass cfg related params to llvm-pass */
-    if (!strncmp(cur, "-distance", 9)
+    if (!strncmp(cur, "-cfg", 4)
         || !strncmp(cur, "-targets", 8)
         || !strncmp(cur, "-outdir", 7))
       cc_params[cc_par_cnt++] = "-mllvm";

@@ -362,4 +362,7 @@
 
 #define MAX_FACTOR 32
 
+#define MAX_SEQ_WIN 100
+#define MAX_SEQ_WIN_SIZE (4 * (1 + MAX_SEQ_WIN))
+
 #endif /* ! _HAVE_CONFIG_H */
