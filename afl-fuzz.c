@@ -69,6 +69,7 @@
 #include <sys/file.h>
 
 #include <math.h>
+#include <graphviz/cgraph.h>
 
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined (__OpenBSD__)
 #  include <sys/sysctl.h>
@@ -105,6 +106,7 @@ EXP_ST u8 *in_dir,                    /* Input directory with test cases  */
           *target_path,               /* Path to target binary            */
           *orig_cmdline;              /* Original command line            */
 
+
 EXP_ST u32 exec_tmout = EXEC_TIMEOUT; /* Configurable exec timeout (ms)   */
 static u32 hang_tmout = EXEC_TIMEOUT; /* Timeout used for hang det (ms)   */
 
@@ -127,6 +129,7 @@ EXP_ST u8  skip_deterministic,        /* Skip deterministic stages?       */
            use_splicing,              /* Recombine input files?           */
            dumb_mode,                 /* Run in non-instrumented mode?    */
            score_changed,             /* Scoring for favorites changed?   */
+           distance_changed,          /* Distance for seed changed        */
            kill_signal,               /* Signal that killed the child     */
            resuming_fuzz,             /* Resuming an older fuzzing job?   */
            timeout_given,             /* Specific timeout given?          */
@@ -160,23 +163,21 @@ static s32 forksrv_pid,               /* PID of the fork server           */
            out_dir_fd = -1;           /* FD of the lock file              */
 
 EXP_ST u8* trace_bits;                /* SHM with instrumentation bitmap  */
-EXP_ST u8* state_bits;                /* SHM with state-var bitmap        */
+EXP_ST u8* state_bits;
 
-EXP_ST u8  virgin_bits[2][MAP_SIZE],     /* Regions yet untouched by fuzzing */
-           virgin_tmout[2][MAP_SIZE],    /* Bits we haven't seen in tmouts   */
-           virgin_crash[2][MAP_SIZE];    /* Bits we haven't seen in crashes  */
+EXP_ST u8  virgin_bits[MAP_SIZE],     /* Regions yet untouched by fuzzing */
+           virgin_tmout[MAP_SIZE],    /* Bits we haven't seen in tmouts   */
+           virgin_crash[MAP_SIZE];    /* Bits we haven't seen in crashes  */
 
-static u8  var_bytes[2][MAP_SIZE];       /* Bytes that appear to be variable */
+static u8  var_bytes[MAP_SIZE];       /* Bytes that appear to be variable */
 
 static s32 shm_id;                    /* ID of the SHM region             */
-static s32 shm_state_id;                    /* ID of the SHM region             */
 
 static volatile u8 stop_soon,         /* Ctrl-C pressed?                  */
                    clear_screen = 1,  /* Window resized?                  */
                    child_timed_out;   /* Traced process timed out?        */
 
 EXP_ST u32 queued_paths,              /* Total number of queued testcases */
-           queued_blocks,             /* Total number of found  blocks    */
            queued_variable,           /* Testcases with variable behavior */
            queued_at_start,           /* Total number of initial inputs   */
            queued_discovered,         /* Items discovered during this run */
@@ -189,7 +190,7 @@ EXP_ST u32 queued_paths,              /* Total number of queued testcases */
            cur_depth,                 /* Current path depth               */
            max_depth,                 /* Max path depth                   */
            useless_at_start,          /* Number of useless starting paths */
-           var_byte_count[2],            /* Bitmap bytes with var behavior   */
+           var_byte_count,            /* Bitmap bytes with var behavior   */
            current_entry,             /* Current queue entry ID           */
            havoc_div = 1;             /* Cycle count divisor for havoc    */
 
@@ -239,8 +240,8 @@ static u32 rand_cnt;                  /* Random number counter            */
 static u64 total_cal_us,              /* Total calibration time (us)      */
            total_cal_cycles;          /* Total calibration cycles         */
 
-static u64 total_bitmap_size[2],         /* Total bit count for all bitmaps  */
-           total_bitmap_entries[2];      /* Number of bitmaps counted        */
+static u64 total_bitmap_size,         /* Total bit count for all bitmaps  */
+           total_bitmap_entries;      /* Number of bitmaps counted        */
 
 static s32 cpu_core_count;            /* CPU core count                   */
 
@@ -268,17 +269,19 @@ struct queue_entry {
       favored,                        /* Currently favored?               */
       fs_redundant;                   /* Marked as redundant in the fs?   */
 
-  u32 bitmap_size[2],                    /* Number of bits set in bitmap     */
-      exec_cksum[2];                     /* Checksum of the execution trace  */
+  u32 bitmap_size,                    /* Number of bits set in bitmap     */
+      exec_cksum;                     /* Checksum of the execution trace  */
 
   u64 exec_us,                        /* Execution time (us)              */
       handicap,                       /* Number of queue cycles behind    */
       depth;                          /* Path depth                       */
 
-  u8* trace_mini[2];                     /* Trace bytes, if kept             */
-  u32 tc_ref[2];                         /* Trace bytes ref count            */
+  u8* trace_mini;                     /* Trace bytes, if kept             */
+  u32 tc_ref;                         /* Trace bytes ref count            */
 
   double distance;                    /* Distance to targets              */
+
+  u8 new_discovered;
 
   struct queue_entry *next,           /* Next element, if any             */
                      *next_100;       /* 100 elements ahead               */
@@ -290,10 +293,14 @@ static struct queue_entry *queue,     /* Fuzzing queue (linked list)      */
                           *queue_top, /* Top of the list                  */
                           *q_prev100; /* Previous 100 marker              */
 
+
+static struct queue_entry *queue_tier1,  /* Fuzzing queue tier            */
+                          *queue_tier2,
+                          *queue_tier3;
+
+
 static struct queue_entry*
   top_rated[MAP_SIZE];                /* Top entries for bitmap bytes     */
-static struct queue_entry*
-  top_state_rated[MAP_SIZE];          /* Top entries for state bitmap bytes*/
 
 struct extra_data {
   u8* data;                           /* Dictionary token data            */
@@ -311,7 +318,13 @@ static double cur_distance = -1.0;     /* Distance of executed input       */
 static double max_distance = -1.0;     /* Maximal distance for any input   */
 static double min_distance = -1.0;     /* Minimal distance for any input   */
 static u32 t_x = 10;                   /* Time to exploitation (Default: 10 min) */
-static u32 performance_score = 0;          /* record perf_score of current queue */
+
+/* Define the variable used in labyrinth */
+static u32 counter = 0;
+static u32 sequence[MAX_SEQ_WIN];
+
+static u8 *cfg_file;
+static Agraph_t *graph;
 
 static u8* (*post_handler)(u8* buf, u32* len);
 
@@ -848,8 +861,11 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
 
   }
 
+  q->new_discovered = 1;
+
   if (q->depth > max_depth) max_depth = q->depth;
 
+  
   if (queue_top) {
 
     queue_top->next = q;
@@ -885,10 +901,7 @@ EXP_ST void destroy_queue(void) {
 
     n = q->next;
     ck_free(q->fname);
-    ck_free(q->trace_mini[0]);
-    #ifdef STATE_VAR
-    ck_free(q->trace_mini[1]);
-    #endif
+    ck_free(q->trace_mini);
     ck_free(q);
     q = n;
 
@@ -904,9 +917,7 @@ EXP_ST void destroy_queue(void) {
 EXP_ST void write_bitmap(void) {
 
   u8* fname;
-  u8* fname_state;
   s32 fd;
-  s32 fd_state;
 
   if (!bitmap_changed) return;
   bitmap_changed = 0;
@@ -914,18 +925,9 @@ EXP_ST void write_bitmap(void) {
   fname = alloc_printf("%s/fuzz_bitmap", out_dir);
   fd = open(fname, O_WRONLY | O_CREAT | O_TRUNC, 0600);
 
-  #ifdef STATE_VAR
-  fname_state = alloc_printf("%s/state_bitmap", out_dir);
-  fd_state = open(fname_state, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-  if (fd_state < 0) PFATAL("Unable to open '%s'", fname_state);
-  ck_write(fd_state, virgin_bits[1], MAP_SIZE, fname_state);
-  close(fd_state);
-  ck_free(fname_state);
-  #endif
-
   if (fd < 0) PFATAL("Unable to open '%s'", fname);
 
-  ck_write(fd, virgin_bits[0], MAP_SIZE, fname);
+  ck_write(fd, virgin_bits, MAP_SIZE, fname);
 
   close(fd);
   ck_free(fname);
@@ -940,7 +942,7 @@ EXP_ST void read_bitmap(u8* fname) {
 
   if (fd < 0) PFATAL("Unable to open '%s'", fname);
 
-  ck_read(fd, virgin_bits[0], MAP_SIZE, fname);
+  ck_read(fd, virgin_bits, MAP_SIZE, fname);
 
   close(fd);
 
@@ -955,11 +957,11 @@ EXP_ST void read_bitmap(u8* fname) {
    This function is called after every exec() on a fairly large buffer, so
    it needs to be fast. We do this in 32-bit and 64-bit flavors. */
 
-static inline u8 has_new_bits(u8* virgin_map, u8 isState) {
+static inline u8 has_new_bits(u8* virgin_map) {
 
 #ifdef WORD_SIZE_64
 
-  u64* current = isState ? (u64*)state_bits :(u64*)trace_bits;
+  u64* current = (u64*)trace_bits;
   u64* virgin  = (u64*)virgin_map;
 
   u32  i = (MAP_SIZE >> 3);
@@ -973,10 +975,18 @@ static inline u8 has_new_bits(u8* virgin_map, u8 isState) {
   else
     cur_distance = -1.0;
 
+  u32* cnt = (u32*) (state_bits);
+  u32* seq = (u32*) (state_bits + 4);
+
+  counter = *cnt;
+  for (u32 i = 0; i <= counter; i++) {
+    sequence[i] = *(seq + i);
+  }
+
 
 #else
 
-  u32* current = isState ? (u32*)state_bits :(u32*)trace_bits;
+  u32* current = (u32*)trace_bits;
   u32* virgin  = (u32*)virgin_map;
 
   u32  i = (MAP_SIZE >> 2);
@@ -1037,7 +1047,7 @@ static inline u8 has_new_bits(u8* virgin_map, u8 isState) {
 
   }
 
-  if (ret && virgin_map == virgin_bits[isState]) bitmap_changed = 1;
+  if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
 
   return ret;
 
@@ -1300,9 +1310,6 @@ static inline void classify_counts(u32* mem) {
 static void remove_shm(void) {
 
   shmctl(shm_id, IPC_RMID, NULL);
-  #ifdef STATE_VAR
-  shmctl(shm_state_id, IPC_RMID, NULL);
-  #endif
 }
 
 
@@ -1355,9 +1362,9 @@ static void update_bitmap_score(struct queue_entry* q) {
          /* Looks like we're going to win. Decrease ref count for the
             previous winner, discard its trace_bits[] if necessary. */
 
-         if (!--top_rated[i]->tc_ref[0]) {
-           ck_free(top_rated[i]->trace_mini[0]);
-           top_rated[i]->trace_mini[0] = 0;
+         if (!--top_rated[i]->tc_ref) {
+           ck_free(top_rated[i]->trace_mini);
+           top_rated[i]->trace_mini = 0;
          }
 
        }
@@ -1365,49 +1372,16 @@ static void update_bitmap_score(struct queue_entry* q) {
        /* Insert ourselves as the new winner. */
 
        top_rated[i] = q;
-       q->tc_ref[0]++;
+       q->tc_ref++;
 
-       if (!q->trace_mini[0]) {
-         q->trace_mini[0] = ck_alloc(MAP_SIZE >> 3);
-         minimize_bits(q->trace_mini[0], trace_bits);
+       if (!q->trace_mini) {
+         q->trace_mini = ck_alloc(MAP_SIZE >> 3);
+         minimize_bits(q->trace_mini, trace_bits);
        }
 
        score_changed = 1;
 
      }
-     #ifdef STATE_VAR
-     if (state_bits[i]) {
-
-       if (top_state_rated[i]) {
-
-         /* Faster-executing or smaller test cases are favored. */
-
-         if (fav_factor > top_state_rated[i]->exec_us * top_state_rated[i]->len) continue;
-
-         /* Looks like we're going to win. Decrease ref count for the
-            previous winner, discard its trace_bits[] if necessary. */
-
-         if (!--top_state_rated[i]->tc_ref[1]) {
-           ck_free(top_state_rated[i]->trace_mini[1]);
-           top_state_rated[i]->trace_mini[1] = 0;
-         }
-
-       }
-
-       /* Insert ourselves as the new winner. */
-
-       top_state_rated[i] = q;
-       q->tc_ref[1]++;
-
-       if (!q->trace_mini[1]) {
-         q->trace_mini[1] = ck_alloc(MAP_SIZE >> 3);
-         minimize_bits(q->trace_mini[1], state_bits);
-       }
-
-       score_changed = 1;
-
-     }
-     #endif
   }
 }
 
@@ -1422,25 +1396,27 @@ static void cull_queue(void) {
 
   struct queue_entry* q;
   static u8 temp_v[MAP_SIZE >> 3];
-  static u8 temp_state_v[MAP_SIZE >> 3];
   u32 i;
 
   if (dumb_mode || !score_changed) return;
 
   score_changed = 0;
+  distance_changed = 0;
 
   memset(temp_v, 255, MAP_SIZE >> 3);
-  memset(temp_state_v, 255, MAP_SIZE >> 3);
 
   queued_favored  = 0;
   pending_favored = 0;
 
   q = queue;
 
+  queue_tier1 = queue_tier2 = queue_tier3 = NULL;
+
   while (q) {
     q->favored = 0;
     q = q->next;
   }
+
 
   /* Let's see if anything in the bitmap isn't captured in temp_v.
      If yes, and if it has a top_rated[] contender, let's use it. */
@@ -1453,8 +1429,8 @@ static void cull_queue(void) {
       /* Remove all bits belonging to the current entry from temp_v. */
 
       while (j--) 
-        if (top_rated[i]->trace_mini[0][j])
-          temp_v[j] &= ~top_rated[i]->trace_mini[0][j];
+        if (top_rated[i]->trace_mini[j])
+          temp_v[j] &= ~top_rated[i]->trace_mini[j];
 
       top_rated[i]->favored = 1;
       queued_favored++;
@@ -1462,24 +1438,6 @@ static void cull_queue(void) {
       if (!top_rated[i]->was_fuzzed) pending_favored++;
 
     }
-    #ifdef STATE_VAR
-    if (top_state_rated[i] && (temp_state_v[i >> 3] & (1 << (i & 7)))) {
-
-      u32 j = MAP_SIZE >> 3;
-
-      /* Remove all bits belonging to the current entry from temp_v. */
-
-      while (j--) 
-        if (top_state_rated[i]->trace_mini[1][j])
-          temp_state_v[j] &= ~top_state_rated[i]->trace_mini[1][j];
-
-      top_state_rated[i]->favored = 1;
-      queued_favored++;
-
-      if (!top_state_rated[i]->was_fuzzed) pending_favored++;
-
-    }
-    #endif
   }
   q = queue;
 
@@ -1497,10 +1455,10 @@ EXP_ST void setup_shm(void) {
 
   u8* shm_str;
 
-  if (!in_bitmap) memset(virgin_bits[0], 255, MAP_SIZE);
+  if (!in_bitmap) memset(virgin_bits, 255, MAP_SIZE);
 
-  memset(virgin_tmout[0], 255, MAP_SIZE);
-  memset(virgin_crash[0], 255, MAP_SIZE);
+  memset(virgin_tmout, 255, MAP_SIZE);
+  memset(virgin_crash, 255, MAP_SIZE);
 
   /* Allocate 16 byte more for distance info */
   shm_id = shmget(IPC_PRIVATE, MAP_SIZE + 16, IPC_CREAT | IPC_EXCL | 0600);
@@ -1517,28 +1475,27 @@ EXP_ST void setup_shm(void) {
      later on, perhaps? */
 
   if (!dumb_mode) setenv(SHM_ENV_VAR, shm_str, 1);
-
-  #ifdef STATE_VAR
-    u8* shm_state_str;
-    if (!in_bitmap) memset(virgin_bits[1], 255, MAP_SIZE);
-    memset(virgin_tmout[1], 255, MAP_SIZE);
-    memset(virgin_crash[1], 255, MAP_SIZE);
-    shm_state_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);
-    if (shm_state_id < 0) PFATAL("shmget() failed");
-    shm_state_str = alloc_printf("%d", shm_state_id);
-    // shm_state_str = alloc_printf("%d", shm_id);
-    if (!dumb_mode) setenv(SHM_STATE_ENV_VAR, shm_state_str, 1);
-    ck_free(shm_state_str);
-
-    state_bits = shmat(shm_state_id, NULL, 0);
-    // state_bits = shmat(shm_id, NULL, 0);
-    if (state_bits == (void *)-1) PFATAL("shmat() failed");
-  #endif
   
   ck_free(shm_str);
 
   trace_bits = shmat(shm_id, NULL, 0);
   if (trace_bits == (void *)-1) PFATAL("shmat() failed");
+
+  /* Allocate state sequence memory */
+  shm_id = shmget(IPC_PRIVATE, MAX_SEQ_WIN_SIZE, IPC_CREAT | IPC_EXCL | 0600);
+
+  if (shm_id < 0) PFATAL("shmget() failed");
+
+  atexit(remove_shm);
+
+  shm_str = alloc_printf("%d", shm_id);
+
+  if (!dumb_mode) setenv(SHM_STATE_ENV_VAR, shm_str, 1);
+
+  ck_free(shm_str);
+
+  state_bits = shmat(shm_id, NULL, 0);
+  if (state_bits == (void *)-1) PFATAL("shmat() failed");
 }
 
 
@@ -1672,6 +1629,30 @@ static void read_testcases(void) {
 
 }
 
+
+static void read_cfg(void) {
+  
+  u8 *fn;
+  FILE *fp;
+
+  fn = cfg_file;
+  if (access(fn, F_OK))
+    PFATAL("Unable to access '%s'", fn);
+
+  fp = fopen(fn, "r");
+  if (!fp) PFATAL("Unable to open '%s'", fn);
+
+  //TODO: 
+  //1. read dot file from cfg_file
+  //2. construct graph
+  //3. find nearest check node of transition
+  //4. seed selection & power scheduling
+  
+  graph = agread(fp, NULL);
+  if (!graph) PFATAL("graph open failed");
+
+  OKF("root node ID: %s", agnameof(agroot(graph)));
+}
 
 /* Helper function for load_extras. */
 
@@ -2263,9 +2244,6 @@ EXP_ST void init_forkserver(char** argv) {
        falling through. */
 
     *(u32*)trace_bits = EXEC_FAIL_SIG;
-    #ifdef STATE_VAR
-    *(u32*)state_bits = EXEC_FAIL_SIG;
-    #endif
     exit(0);
 
   }
@@ -2380,9 +2358,6 @@ EXP_ST void init_forkserver(char** argv) {
   if (*(u32*)trace_bits == EXEC_FAIL_SIG)
     FATAL("Unable to execute target application ('%s')", argv[0]);
 
-  if (*(u32*)state_bits == EXEC_FAIL_SIG)
-    FATAL("Unable to execute state target application ('%s')", argv[0]);
-
   if (mem_limit && mem_limit < 500 && uses_asan) {
 
     SAYF("\n" cLRD "[-] " cRST
@@ -2443,7 +2418,7 @@ static u8 run_target(char** argv, u32 timeout) {
   static u64 exec_ms = 0;
 
   int status = 0;
-  u32 tb4[2];
+  u32 tb4;
 
   child_timed_out = 0;
 
@@ -2452,9 +2427,7 @@ static u8 run_target(char** argv, u32 timeout) {
      territory. */
 
   memset(trace_bits, 0, MAP_SIZE + 16);
-  #ifdef STATE_VAR
-  memset(state_bits, 0, MAP_SIZE);
-  #endif
+  memset(state_bits, 0, MAX_SEQ_WIN_SIZE);
   MEM_BARRIER();
 
   /* If we're running in "dumb" mode, we can't rely on the fork server
@@ -2537,9 +2510,6 @@ static u8 run_target(char** argv, u32 timeout) {
          falling through. */
 
       *(u32*)trace_bits = EXEC_FAIL_SIG;
-      #ifdef STATE_VAR
-      *(u32*)state_bits = EXEC_FAIL_SIG;
-      #endif
       exit(0);
 
     }
@@ -2614,19 +2584,12 @@ static u8 run_target(char** argv, u32 timeout) {
 
   MEM_BARRIER();
 
-  tb4[0] = *(u32*)trace_bits;
-  #ifdef STATE_VAR
-  tb4[1] = *(u32*)state_bits;
-  #endif
+  tb4 = *(u32*)trace_bits;
 
 #ifdef WORD_SIZE_64
   classify_counts((u64*)trace_bits);
-  #ifdef STATE_VAR
-  classify_counts((u64*)state_bits);
-  #endif
 #else
   classify_counts((u32*)trace_bits);
-  classify_counts((u32*)state_bits);
 #endif /* ^WORD_SIZE_64 */
 
   prev_timed_out = child_timed_out;
@@ -2651,11 +2614,7 @@ static u8 run_target(char** argv, u32 timeout) {
     return FAULT_CRASH;
   }
 
-  #ifdef STATE_VAR
-  if ((dumb_mode == 1 || no_forkserver) && (tb4[0] == EXEC_FAIL_SIG || tb4[1] == EXEC_FAIL_SIG))
-  #else
-  if ((dumb_mode == 1 || no_forkserver) && tb4[0] == EXEC_FAIL_SIG)
-  #endif
+  if ((dumb_mode == 1 || no_forkserver) && tb4 == EXEC_FAIL_SIG)
     return FAULT_ERROR;
 
   /* It makes sense to account for the slowest units only if the testcase was run
@@ -2740,14 +2699,9 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
                          u32 handicap, u8 from_queue) {
 
   static u8 first_trace[MAP_SIZE];
-  static u8 first_state_trace[MAP_SIZE];
 
-  u8  fault = 0, new_bits[2] = {0}, var_detected = 0, hnb[2] = {0};
-  #ifdef STATE_VAR
-  u8  first_run = (q->exec_cksum[0] == 0 && q->exec_cksum[1] == 0);
-  #else
-  u8  first_run = q->exec_cksum[0] == 0;
-  #endif
+  u8  fault = 0, new_bits = 0, var_detected = 0, hnb = 0;
+  u8  first_run = (q->exec_cksum == 0);
   u64 start_us, stop_us;
 
   s32 old_sc = stage_cur, old_sm = stage_max;
@@ -2773,24 +2727,17 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
   if (dumb_mode != 1 && !no_forkserver && !forksrv_pid)
     init_forkserver(argv);
 
-  #ifdef STATE_VAR
-  if (q->exec_cksum[0] && q->exec_cksum[1]) {
-    memcpy(first_state_trace, state_bits, MAP_SIZE);
-    hnb[1] = has_new_bits(virgin_bits[1], 1);
-    new_bits[1] =(hnb[1] > new_bits[1]) ? hnb[1] : new_bits[1];
-  #else
-  if (q->exec_cksum[0]) {
-  #endif
+  if (q->exec_cksum) {
     memcpy(first_trace, trace_bits, MAP_SIZE);
-    hnb[0] = has_new_bits(virgin_bits[0], 0);
-    new_bits[0] =(hnb[0] > new_bits[0]) ? hnb[0] : new_bits[0];
+    hnb = has_new_bits(virgin_bits);
+    if (hnb > new_bits) new_bits = hnb;
   }
 
   start_us = get_cur_time_us();
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
 
-    u32 cksum[2];
+    u32 cksum;
 
     if (!first_run && !(stage_cur % stats_update_freq)) show_stats();
 
@@ -2803,21 +2750,17 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
     if (stop_soon || fault != crash_mode) goto abort_calibration;
 
-    #ifdef STATE_VAR
-    if (!dumb_mode && !stage_cur && (!count_bytes(trace_bits) ||!count_bytes(state_bits))) {
-    #else
     if (!dumb_mode && !stage_cur && !count_bytes(trace_bits)) {
-    #endif
       fault = FAULT_NOINST;
       goto abort_calibration;
     }
 
-    cksum[0] = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+    cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
     if (q->distance <= 0) {
 
       /* This calculates cur_distance */
-      has_new_bits(virgin_bits[0], 0);
+      has_new_bits(virgin_bits);
 
       q->distance = cur_distance;
       if (cur_distance > 0) {
@@ -2827,40 +2770,26 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
           min_distance = cur_distance;
         }
         if (cur_distance > max_distance) max_distance = cur_distance;
-        if (cur_distance < min_distance) min_distance = cur_distance;
-
+        if (cur_distance < min_distance) {
+          min_distance = cur_distance;
+          distance_changed = 1;
+        }
       }
     }
 
 
-    #ifdef STATE_VAR
-    cksum[1] = hash32(state_bits, MAP_SIZE, HASH_CONST);
-    if (q->exec_cksum[0] != cksum[0] && q->exec_cksum[1] != cksum[1]) {
-      hnb[1] = has_new_bits(virgin_bits[1], 1);
-      new_bits[1] =(hnb[1] > new_bits[1]) ? hnb[1] : new_bits[1];
-    #else
-    if (q->exec_cksum[0] != cksum[0]) {
-    #endif
-      hnb[0] = has_new_bits(virgin_bits[0], 0);
-      new_bits[0] =(hnb[0] > new_bits[0]) ? hnb[0] : new_bits[0];
+    if (q->exec_cksum != cksum) {
+      hnb = has_new_bits(virgin_bits);
+      if (hnb > new_bits) new_bits = hnb;
 
-      #ifdef STATE_VAR
-      if (q->exec_cksum[0] && q->exec_cksum[1]) {
-      #else
-      if (q->exec_cksum[0]) {
-      #endif
+      if (q->exec_cksum) {
 
         u32 i;
 
         for (i = 0; i < MAP_SIZE; i++) {
-          #ifdef STATE_VAR
-          if (!(var_bytes[0][i] || var_bytes[1][i]) && (first_trace[i] != trace_bits[i] && first_state_trace[i]!=state_bits[i])) {
-            var_bytes[1][i] = 1;
-          #else
-          if (!var_bytes[0][i] && first_trace[i] != trace_bits[i]) {
-          #endif
+          if (!var_bytes[i] && first_trace[i] != trace_bits[i]) {
           
-            var_bytes[0][i] = 1;
+            var_bytes[i] = 1;
             stage_max    = CAL_CYCLES_LONG;
 
           }
@@ -2871,12 +2800,8 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
 
       } else {
 
-        q->exec_cksum[0] = cksum[0];
+        q->exec_cksum = cksum;
         memcpy(first_trace, trace_bits, MAP_SIZE);
-        #ifdef STATE_VAR
-        q->exec_cksum[1] = cksum[1];
-        memcpy(first_state_trace, state_bits, MAP_SIZE);
-        #endif
       }
 
     }
@@ -2892,34 +2817,22 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
      This is used for fuzzing air time calculations in calculate_score(). */
 
   q->exec_us     = (stop_us - start_us) / stage_max;
-  q->bitmap_size[0] = count_bytes(trace_bits);
-  #ifdef STATE_VAR
-  q->bitmap_size[1] = count_bytes(state_bits);
-  total_bitmap_size[1] += q->bitmap_size[1];
-  total_bitmap_entries[1]++;
-  #endif
+  q->bitmap_size = count_bytes(trace_bits);
   q->handicap    = handicap;
   q->cal_failed  = 0;
 
-  total_bitmap_size[0] += q->bitmap_size[0];
-  total_bitmap_entries[0]++;
+  total_bitmap_size += q->bitmap_size;
+  total_bitmap_entries++;
 
   update_bitmap_score(q);
 
   /* If this case didn't result in new output from the instrumentation, tell
      parent. This is a non-critical problem, but something to warn the user
      about. */
-  #ifdef STATE_VAR
-  if (!dumb_mode && first_run && !fault && (!new_bits[0] || !new_bits[1])) fault = FAULT_NOBITS;
-  #else
-  if (!dumb_mode && first_run && !fault && !new_bits[0]) fault = FAULT_NOBITS;
-  #endif
+  if (!dumb_mode && first_run && !fault && !new_bits) fault = FAULT_NOBITS;
+
 abort_calibration:
-  #ifdef STATE_VAR
-  if ((new_bits[0] == 2 || new_bits[1] == 2) && !q->has_new_cov) {
-  #else
-  if ((new_bits[0] == 2) && !q->has_new_cov) {
-  #endif
+  if ((new_bits == 2) && !q->has_new_cov) {
     q->has_new_cov = 1;
     queued_with_cov++;
   }
@@ -2928,10 +2841,7 @@ abort_calibration:
 
   if (var_detected) {
 
-    var_byte_count[0] = count_bytes(var_bytes[0]);
-    #ifdef STATE_VAR
-    var_byte_count[1] = count_bytes(var_bytes[1]);
-    #endif
+    var_byte_count = count_bytes(var_bytes);
 
     if (!q->var_behavior) {
       mark_as_variable(q);
@@ -3003,7 +2913,7 @@ static void perform_dry_run(char** argv) {
 
     if (res == crash_mode || res == FAULT_NOBITS)
       SAYF(cGRA "    len = %u, map size = %u, exec speed = %llu us\n" cRST, 
-           q->len, q->bitmap_size[0], q->exec_us);
+           q->len, q->bitmap_size, q->exec_us);
 
     switch (res) {
 
@@ -3393,34 +3303,26 @@ static void write_crash_readme(void) {
 static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
   u8  *fn = "";
-  u8  hnb[2];
+  u8  hnb;
   s32 fd;
   u8  keeping = 0, res;
 
   if (fault == crash_mode) {
-    hnb[0] = has_new_bits(virgin_bits[0], 0);
-    #ifdef STATE_VAR
-    hnb[1] = has_new_bits(virgin_bits[1], 1);
+    hnb = has_new_bits(virgin_bits);
 
     /* Keep only if there are new bits in the map, add to queue for
        future fuzzing, etc. */
 
-    if (!(hnb[0] || hnb[1])) {
-    #else
-    if (!hnb[0]) {
-    #endif
+    if (!hnb) {
       if (crash_mode) total_crashes++;
       return 0;
     }
 
-    if (hnb[0]){
-      queued_blocks++;
-    }
 
 #ifndef SIMPLE_FILES
 
-    fn = alloc_printf("%s/queue/id:%06u,%s,score:%04u", out_dir, queued_paths,
-                      describe_op(hnb[0]), performance_score);
+    fn = alloc_printf("%s/queue/id:%06u,%s", out_dir, queued_paths,
+                      describe_op(hnb));
 
 #else
 
@@ -3429,24 +3331,13 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 #endif /* ^!SIMPLE_FILES */
 
     add_to_queue(fn, len, 0);
-    #ifdef STATE_VAR
-    if (not_on_tty && hnb[1]){
-      fn = alloc_printf("%s/queue/id:%06u,%s,state", out_dir, queued_paths, describe_op(hnb[0]));
-      ACTF("State bitmap change causes this case: %u", queued_paths);
-      fflush(stdout);
-    }
-    if (hnb[0] == 2 || hnb[1] == 2) {
-    #else
-    if (hnb[0] == 2) {
-    #endif
+    if (hnb == 2) {
       queue_top->has_new_cov = 1;
       queued_with_cov++;
     }
 
-    queue_top->exec_cksum[0] = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-    #ifdef STATE_VAR
-    queue_top->exec_cksum[1] = hash32(state_bits, MAP_SIZE, HASH_CONST);
-    #endif
+    queue_top->exec_cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+
     /* Try to calibrate inline; this also calls update_bitmap_score() when
        successful. */
 
@@ -3481,19 +3372,11 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
 #ifdef WORD_SIZE_64
         simplify_trace((u64*)trace_bits);
-        #ifdef STATE_VAR
-        simplify_trace((u64*)state_bits);
-        #endif
 #else
         simplify_trace((u32*)trace_bits);
-        simplify_trace((u32*)state_bits);
 #endif /* ^WORD_SIZE_64 */
 
-        #ifdef STATE_VAR
-        if (!(has_new_bits(virgin_tmout[0], 0) && has_new_bits(virgin_tmout[1], 1))) return keeping;
-        #else
-        if (!has_new_bits(virgin_tmout[0], 0)) return keeping;
-        #endif
+        if (!has_new_bits(virgin_tmout)) return keeping;
       }
 
       unique_tmouts++;
@@ -3552,19 +3435,11 @@ keep_as_crash:
 
 #ifdef WORD_SIZE_64
         simplify_trace((u64*)trace_bits);
-        #ifdef STATE_VAR
-        simplify_trace((u64*)state_bits);
-        #endif
 #else
         simplify_trace((u32*)trace_bits);
-        simplify_trace((u32*)state_bits);
 #endif /* ^WORD_SIZE_64 */
 
-        #ifdef STATE_VAR
-        if (!(has_new_bits(virgin_crash[0], 0) && has_new_bits(virgin_crash[1], 1))) return keeping;
-        #else
-        if (!has_new_bits(virgin_crash[0], 0)) return keeping;
-        #endif
+        if (!has_new_bits(virgin_crash)) return keeping;
       }
 
       if (!unique_crashes) write_crash_readme();
@@ -3682,12 +3557,12 @@ static void find_timeout(void) {
 
 /* Update stats file for unattended monitoring. */
 
-static void write_stats_file(double bitmap_cvg, int isState, double stability, double eps) {
+static void write_stats_file(double bitmap_cvg, double stability, double eps) {
 
   static double last_bcvg, last_stab, last_eps;
   static struct rusage usage;
 
-  u8* fn = isState ? alloc_printf("%s/state_fuzzer_stats", out_dir) : alloc_printf("%s/fuzzer_stats", out_dir);
+  u8* fn = alloc_printf("%s/fuzzer_stats", out_dir);
   s32 fd;
   FILE* f;
 
@@ -3745,7 +3620,7 @@ static void write_stats_file(double bitmap_cvg, int isState, double stability, d
              "slowest_exec_ms   : %llu\n",
              start_time / 1000, get_cur_time() / 1000, getpid(),
              queue_cycle ? (queue_cycle - 1) : 0, total_execs, eps,
-             queued_blocks, queued_favored, queued_discovered, queued_imported,
+             queued_paths, queued_favored, queued_discovered, queued_imported,
              max_depth, current_entry, pending_favored, pending_not_fuzzed,
              queued_variable, stability, bitmap_cvg, unique_crashes,
              unique_hangs, last_path_time / 1000, last_crash_time / 1000,
@@ -3808,7 +3683,7 @@ static void maybe_update_plot_file(double bitmap_cvg, double eps) {
 
   fprintf(plot_file, 
           "%llu, %llu, %u, %u, %u, %u, %0.02f%%, %llu, %llu, %u, %0.02f\n",
-          get_cur_time() / 1000, queue_cycle - 1, current_entry, queued_blocks,
+          get_cur_time() / 1000, queue_cycle - 1, current_entry, queued_paths,
           pending_not_fuzzed, pending_favored, bitmap_cvg, unique_crashes,
           unique_hangs, max_depth, eps); /* ignore errors */
 
@@ -4165,6 +4040,10 @@ static void maybe_delete_out_dir(void) {
   if (unlink(fn) && errno != ENOENT) goto dir_cleanup_failed;
   ck_free(fn);
 
+  fn = alloc_printf("%s/distance_file", out_dir);
+  if (unlink(fn) && errno != ENOENT) goto dir_cleanup_failed;
+  ck_free(fn);
+
   OKF("Output dir cleanup successful.");
 
   /* Wow... is that all? If yes, celebrate! */
@@ -4197,10 +4076,10 @@ static void show_stats(void) {
 
   static u64 last_stats_ms, last_plot_ms, last_ms, last_execs;
   static double avg_exec;
-  double t_byte_ratio[2], stab_ratio;
+  double t_byte_ratio, stab_ratio;
 
   u64 cur_ms;
-  u32 t_bytes[2], t_bits[2];
+  u32 t_bytes, t_bits;
 
   u32 banner_len, banner_pad;
   u8  tmp[256];
@@ -4247,15 +4126,11 @@ static void show_stats(void) {
 
   /* Do some bitmap stats. */
 
-  t_bytes[0] = count_non_255_bytes(virgin_bits[0]);
-  t_byte_ratio[0] = ((double)t_bytes[0] * 100) / MAP_SIZE;
-  #ifdef STATE_VAR
-  t_bytes[1] = count_non_255_bytes(virgin_bits[1]);
-  t_byte_ratio[1] = ((double)t_bytes[1] * 100) / MAP_SIZE;
-  #endif
+  t_bytes = count_non_255_bytes(virgin_bits);
+  t_byte_ratio = ((double)t_bytes * 100) / MAP_SIZE;
 
-  if (t_bytes[0]) 
-    stab_ratio = 100 - ((double)var_byte_count[0]) * 100 / t_bytes[0];
+  if (t_bytes) 
+    stab_ratio = 100 - ((double)var_byte_count) * 100 / t_bytes;
   else
     stab_ratio = 100;
 
@@ -4264,10 +4139,7 @@ static void show_stats(void) {
   if (cur_ms - last_stats_ms > STATS_UPDATE_SEC * 1000) {
 
     last_stats_ms = cur_ms;
-    write_stats_file(t_byte_ratio[0], 0, stab_ratio, avg_exec);
-    #ifdef STATE_VAR
-    write_stats_file(t_byte_ratio[1], 1, stab_ratio, avg_exec);
-    #endif
+    write_stats_file(t_byte_ratio, stab_ratio, avg_exec);
     save_auto();
     write_bitmap();
 
@@ -4278,12 +4150,7 @@ static void show_stats(void) {
   if (cur_ms - last_plot_ms > PLOT_UPDATE_SEC * 1000) {
 
     last_plot_ms = cur_ms;
-    #ifdef STATE_VAR
-    maybe_update_plot_file(t_byte_ratio[1], avg_exec);
-    #else
-    maybe_update_plot_file(t_byte_ratio[0], avg_exec);
-    #endif
-    //maybe_update_plot_file(t_byte_ratio[0], avg_exec);
+    maybe_update_plot_file(t_byte_ratio, avg_exec);
  
   }
 
@@ -4300,7 +4167,7 @@ static void show_stats(void) {
 
   /* Compute some mildly useful bitmap stats. */
 
-  t_bits[0] = (MAP_SIZE << 3) - count_bits(virgin_bits[0]);
+  t_bits = (MAP_SIZE << 3) - count_bits(virgin_bits);
 
   /* Now, for the visuals... */
 
@@ -4404,7 +4271,7 @@ static void show_stats(void) {
   }
 
   SAYF(bSTG bV bSTOP "  total paths : " cRST "%-5s  " bSTG bV "\n",
-       DI(queued_blocks));
+       DI(queued_paths));
 
   /* Highlight crashes in red if found, denote going over the KEEP_UNIQUE_CRASH
      limit with a '+' appended to the count. */
@@ -4437,18 +4304,12 @@ static void show_stats(void) {
 
   SAYF(bV bSTOP "  now processing : " cRST "%-17s " bSTG bV bSTOP, tmp);
 
-  sprintf(tmp, "%0.02f%% / %0.02f%%", ((double)queue_cur->bitmap_size[0]) * 
-          100 / MAP_SIZE, t_byte_ratio[0]);
-  SAYF("    map density : %s%-21s " bSTG bV "\n", t_byte_ratio[0] > 70 ? cLRD : 
-       ((t_bytes[0] < 200 && !dumb_mode) ? cPIN : cRST), tmp);
+  sprintf(tmp, "%0.02f%% / %0.02f%%", ((double)queue_cur->bitmap_size) * 
+          100 / MAP_SIZE, t_byte_ratio);
 
+  SAYF("    map density : %s%-21s " bSTG bV "\n", t_byte_ratio > 70 ? cLRD : 
+       ((t_bytes < 200 && !dumb_mode) ? cPIN : cRST), tmp);
 
-  #ifdef STATE_VAR
-  sprintf(tmp, "%0.02f%% / %0.02f%%", ((double)queue_cur->bitmap_size[1]) * 
-          100 / MAP_SIZE, t_byte_ratio[1]);
-  SAYF("    state map density : %s%-21s " bSTG bV "\n", t_byte_ratio[1] > 70 ? cLRD : 
-       ((t_bytes[1] < 200 && !dumb_mode) ? cPIN : cRST), tmp);
-  #endif
   
   sprintf(tmp, "%s (%0.02f%%)", DI(cur_skipped_paths),
           ((double)cur_skipped_paths * 100) / queued_paths);
@@ -4456,7 +4317,7 @@ static void show_stats(void) {
   SAYF(bV bSTOP " paths timed out : " cRST "%-17s " bSTG bV, tmp);
 
   sprintf(tmp, "%0.02f bits/tuple",
-          t_bytes[0] ? (((double)t_bits[0]) / t_bytes[0]) : 0);
+          t_bytes ? (((double)t_bits) / t_bytes) : 0);
 
   SAYF(bSTOP " count coverage : " cRST "%-21s " bSTG bV "\n", tmp);
 
@@ -4591,11 +4452,11 @@ static void show_stats(void) {
 
   SAYF(bV bSTOP "       havoc : " cRST "%-37s " bSTG bV bSTOP, tmp);
 
-  if (t_bytes[0]) sprintf(tmp, "%0.02f%%", stab_ratio);
+  if (t_bytes) sprintf(tmp, "%0.02f%%", stab_ratio);
     else strcpy(tmp, "n/a");
 
-  SAYF(" stability : %s%-10s " bSTG bV "\n", (stab_ratio < 85 && var_byte_count[0] > 40) 
-       ? cLRD : ((queued_variable && (!persistent_mode || var_byte_count[0] > 20))
+  SAYF(" stability : %s%-10s " bSTG bV "\n", (stab_ratio < 85 && var_byte_count > 40) 
+       ? cLRD : ((queued_variable && (!persistent_mode || var_byte_count > 20))
        ? cMGN : cRST), tmp);
 
   if (!bytes_trim_out) {
@@ -4700,8 +4561,8 @@ static void show_init_stats(void) {
     if (!min_us || q->exec_us < min_us) min_us = q->exec_us;
     if (q->exec_us > max_us) max_us = q->exec_us;
 
-    if (!min_bits || q->bitmap_size[0] < min_bits) min_bits = q->bitmap_size[0];
-    if (q->bitmap_size[0] > max_bits) max_bits = q->bitmap_size[0];
+    if (!min_bits || q->bitmap_size < min_bits) min_bits = q->bitmap_size;
+    if (q->bitmap_size > max_bits) max_bits = q->bitmap_size;
 
     if (q->len > max_len) max_len = q->len;
 
@@ -4746,7 +4607,7 @@ static void show_init_stats(void) {
       cGRA "       Bitmap range : " cRST "%u to %u bits (average: %0.02f bits)\n"
       cGRA "        Exec timing : " cRST "%s to %s us (average: %s us)\n",
       queued_favored, queued_variable, queued_paths, min_bits, max_bits, 
-      ((double)total_bitmap_size[0]) / (total_bitmap_entries[0] ? total_bitmap_entries[0] : 1),
+      ((double)total_bitmap_size) / (total_bitmap_entries ? total_bitmap_entries : 1),
       DI(min_us), DI(max_us), DI(avg_us));
 
   if (!timeout_given) {
@@ -4809,7 +4670,6 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
 
   static u8 tmp[64];
   static u8 clean_trace[MAP_SIZE];
-  static u8 clean_state_trace[MAP_SIZE];
 
   u8  needs_write = 0, fault = 0;
   u32 trim_exec = 0;
@@ -4846,7 +4706,7 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
     while (remove_pos < q->len) {
 
       u32 trim_avail = MIN(remove_len, q->len - remove_pos);
-      u32 cksum[2];
+      u32 cksum;
 
       write_with_gap(in_buf, q->len, remove_pos, trim_avail);
 
@@ -4857,19 +4717,14 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
 
       /* Note that we don't keep track of crashes or hangs here; maybe TODO? */
 
-      cksum[0] = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-      #ifdef STATE_VAR
-      cksum[1] = hash32(state_bits, MAP_SIZE, HASH_CONST);
+      cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
       /* If the deletion had no impact on the trace, make it permanent. This
          isn't perfect for variable-path inputs, but we're just making a
          best-effort pass, so it's not a big deal if we end up with false
          negatives every now and then. */
 
-      if (cksum[0] == q->exec_cksum[0] || cksum[1] == q->exec_cksum[1]) {
-      #else
-      if (cksum[0] == q->exec_cksum[0]) {
-      #endif
+      if (cksum == q->exec_cksum) {
         u32 move_tail = q->len - remove_pos - trim_avail;
 
         q->len -= trim_avail;
@@ -4885,9 +4740,6 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
 
           needs_write = 1;
           memcpy(clean_trace, trace_bits, MAP_SIZE);
-          #ifdef STATE_VAR
-          memcpy(clean_state_trace, state_bits, MAP_SIZE);
-          #endif
         }
 
       } else remove_pos += remove_len;
@@ -4920,9 +4772,6 @@ static u8 trim_case(char** argv, struct queue_entry* q, u8* in_buf) {
     close(fd);
 
     memcpy(trace_bits, clean_trace, MAP_SIZE);
-    #ifdef STATE_VAR
-    memcpy(state_bits, clean_state_trace, MAP_SIZE);
-    #endif
     update_bitmap_score(q);
 
   }
@@ -5038,7 +4887,7 @@ static u32 choose_block_len(u32 limit) {
 static u32 calculate_score(struct queue_entry* q) {
 
   u32 avg_exec_us = total_cal_us / total_cal_cycles;
-  u32 avg_bitmap_size = total_bitmap_size[0] / total_bitmap_entries[0];
+  u32 avg_bitmap_size = total_bitmap_size / total_bitmap_entries;
   u32 perf_score = 100;
 
   /* Adjust score based on execution speed of this path, compared to the
@@ -5056,12 +4905,12 @@ static u32 calculate_score(struct queue_entry* q) {
   /* Adjust score based on bitmap size. The working theory is that better
      coverage translates to better targets. Multiplier from 0.25x to 3x. */
 
-  if (q->bitmap_size[0] * 0.3 > avg_bitmap_size) perf_score *= 3;
-  else if (q->bitmap_size[0] * 0.5 > avg_bitmap_size) perf_score *= 2;
-  else if (q->bitmap_size[0] * 0.75 > avg_bitmap_size) perf_score *= 1.5;
-  else if (q->bitmap_size[0] * 3 < avg_bitmap_size) perf_score *= 0.25;
-  else if (q->bitmap_size[0] * 2 < avg_bitmap_size) perf_score *= 0.5;
-  else if (q->bitmap_size[0] * 1.5 < avg_bitmap_size) perf_score *= 0.75;
+  if (q->bitmap_size * 0.3 > avg_bitmap_size) perf_score *= 3;
+  else if (q->bitmap_size * 0.5 > avg_bitmap_size) perf_score *= 2;
+  else if (q->bitmap_size * 0.75 > avg_bitmap_size) perf_score *= 1.5;
+  else if (q->bitmap_size * 3 < avg_bitmap_size) perf_score *= 0.25;
+  else if (q->bitmap_size * 2 < avg_bitmap_size) perf_score *= 0.5;
+  else if (q->bitmap_size * 1.5 < avg_bitmap_size) perf_score *= 0.75;
 
   /* Adjust score based on handicap. Handicap is proportional to how late
      in the game we learned about this path. Latecomers are allowed to run
@@ -5148,18 +4997,29 @@ static u32 calculate_score(struct queue_entry* q) {
   }
   
 
-   perf_score *= power_factor;
+  // perf_score *= power_factor;
 
+  // agnode *n;
+  // u32 i;
+  // for (n = agfstnode(graph); n; n = agnxtnode(graph, n)) {
+  //   fprintf(stderr, "0x%x ", AGID(n));
+  // }
 
   /* Make sure that we don't go over limit. */
 
   if (perf_score > HAVOC_MAX_MULT * 100) perf_score = HAVOC_MAX_MULT * 100;
 
+
   /* AFLGO-DEBUGGING */
-  //fprintf(stderr, "[Time %llu] q->distance: %4lf, max_distance: %4lf min_distance: %4lf, T: %4.3lf, power_factor: %4.3lf, adjusted perf_score: %4d\n", t, q->distance, max_distance, min_distance, T, power_factor, perf_score);
-  fprintf(distance_file, "%llu, %4lf, %4lf, %4lf, %4.3lf, %4.3lf, %4d\n", 
-                          t, q->distance, max_distance, min_distance, T, power_factor, perf_score);
-  fflush(distance_file);
+  //fprintf(stderr, "[Time %llu] q->distance: %4lf, max_distance: %4lf min_distance: %4lf, T: %4.3lf, power_factor: %4.3lf, adjusted perf_score: %4d\n", 
+  //                   t, q->distance, max_distance, min_distance, T, power_factor, perf_score);
+  
+  
+  // fprintf(distance_file, "%llu, %4lf, %4lf, %4lf, %4.3lf, %4.3lf, %4d\n", 
+  //                         t, q->distance, max_distance, min_distance, T, power_factor, perf_score);
+  // fflush(distance_file);
+
+  //fprintf(stderr, "counter: %d, last node: 0x%x\n", counter, sequence[counter]);
 
   return perf_score;
 
@@ -5362,7 +5222,7 @@ static u8 fuzz_one(char** argv) {
   u8  *in_buf, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
   u64 havoc_queued,  orig_hit_cnt, new_hit_cnt;
   u32 splice_cycle = 0, perf_score = 100, orig_perf, eff_cnt = 1;
-  u32 prev_cksum[2]={1,1};
+  u32 prev_cksum = 1;
 
   u8  ret_val = 1, doing_det = 0;
 
@@ -5451,10 +5311,7 @@ static u8 fuzz_one(char** argv) {
          avoiding the usage of an invalid trace_bits.
          For more info: https://github.com/AFLplusplus/AFLplusplus/pull/425 */
 
-      queue_cur->exec_cksum[0] = 0;
-      #ifdef STATE_VAR
-      queue_cur->exec_cksum[1] = 0;
-      #endif
+      queue_cur->exec_cksum = 0;
 
       res = calibrate_case(argv, queue_cur, in_buf, queue_cycle - 1, 0);
 
@@ -5502,8 +5359,6 @@ static u8 fuzz_one(char** argv) {
 
   orig_perf = perf_score = calculate_score(queue_cur);
 
-  performance_score = perf_score;
-
   /* Skip right away if -d is given, if we have done deterministic fuzzing on
      this entry ourselves (was_fuzzed), or if it has gone through deterministic
      testing in earlier, resumed runs (passed_det). */
@@ -5513,11 +5368,7 @@ static u8 fuzz_one(char** argv) {
 
   /* Skip deterministic fuzzing if exec path checksum puts this out of scope
      for this master instance. */
-  #ifdef STATE_VAR
-  if (master_max && (((queue_cur->exec_cksum[0] % master_max) != master_id - 1) || ((queue_cur->exec_cksum[1] % master_max) != master_id - 1)))
-  #else
-  if (master_max && ((queue_cur->exec_cksum[0] % master_max) != master_id - 1))
-  #endif
+  if (master_max && ((queue_cur->exec_cksum % master_max) != master_id - 1))
     goto havoc_stage;
 
   doing_det = 1;
@@ -5542,10 +5393,7 @@ static u8 fuzz_one(char** argv) {
 
   orig_hit_cnt = queued_paths + unique_crashes;
 
-  prev_cksum[0] = queue_cur->exec_cksum[0];
-  #ifdef STATE_VAR
-  prev_cksum[1] = queue_cur->exec_cksum[1];
-  #endif
+  prev_cksum = queue_cur->exec_cksum;
 
   for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
 
@@ -5587,13 +5435,7 @@ static u8 fuzz_one(char** argv) {
     if (!dumb_mode && (stage_cur & 7) == 7) {
 
       u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-      #ifdef STATE_VAR
-      u32 state_cksum = hash32(state_bits, MAP_SIZE, HASH_CONST);
-
-      if (stage_cur == stage_max - 1 && cksum == prev_cksum[0] && state_cksum == prev_cksum[1]) {
-      #else
-      if (stage_cur == stage_max - 1 && cksum == prev_cksum[0]) {
-      #endif
+      if (stage_cur == stage_max - 1 && cksum == prev_cksum) {
         /* If at end of file and we are still collecting a string, grab the
            final character and force output. */
 
@@ -5604,12 +5446,7 @@ static u8 fuzz_one(char** argv) {
           maybe_add_auto(a_collect, a_len);
 
       }
-      #ifdef STATE_VAR
-      else if (cksum != prev_cksum[0] || state_cksum != prev_cksum[1]) {
-        prev_cksum[1] = state_cksum;
-      #else
-      else if (cksum != prev_cksum[0]) {
-      #endif
+      else if (cksum != prev_cksum) {
         /* Otherwise, if the checksum has changed, see if we have something
            worthwhile queued up, and collect that if the answer is yes. */
 
@@ -5617,16 +5454,13 @@ static u8 fuzz_one(char** argv) {
           maybe_add_auto(a_collect, a_len);
 
         a_len = 0;
-        prev_cksum[0] = cksum;
+        prev_cksum = cksum;
       }
 
       /* Continue collecting string, but only if the bit flip actually made
          any difference - we don't want no-op tokens. */
-      #ifdef STATE_VAR
-      if (cksum != queue_cur->exec_cksum[0] || state_cksum != queue_cur->exec_cksum[1]) {
-      #else
-      if (cksum != queue_cur->exec_cksum[0]) {
-      #endif
+      if (cksum != queue_cur->exec_cksum) {
+
         if (a_len < MAX_AUTO_EXTRA) a_collect[a_len] = out_buf[stage_cur >> 3];        
         a_len++;
 
@@ -5747,27 +5581,16 @@ static u8 fuzz_one(char** argv) {
     if (!eff_map[EFF_APOS(stage_cur)]) {
 
       u32 cksum;
-      u32 state_cksum;
 
       /* If in dumb mode or if the file is very short, just flag everything
          without wasting time on checksums. */
 
       if (!dumb_mode && len >= EFF_MIN_LEN){
         cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
-        #ifdef STATE_VAR
-        state_cksum = hash32(state_bits, MAP_SIZE, HASH_CONST);
-        #endif
       }else{
-        cksum = ~queue_cur->exec_cksum[0];
-        #ifdef STATE_VAR
-        state_cksum = ~queue_cur->exec_cksum[1];
-        #endif
+        cksum = ~queue_cur->exec_cksum;
       }
-      #ifdef STATE_VAR
-      if (cksum != queue_cur->exec_cksum[0] || state_cksum != queue_cur->exec_cksum[1]) {
-      #else
-      if (cksum != queue_cur->exec_cksum[0]) {
-      #endif
+      if (cksum != queue_cur->exec_cksum) {
         eff_map[EFF_APOS(stage_cur)] = 1;
         eff_cnt++;
       }
@@ -8211,7 +8034,7 @@ int main(int argc, char** argv) {
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
-  while ((opt = getopt(argc, argv, "+i:o:f:m:b:t:T:dnsCB:S:M:x:QVz:c:")) > 0)
+  while ((opt = getopt(argc, argv, "+i:o:f:m:b:t:T:dnsCB:S:M:x:QVz:c:g:")) > 0)
 
     switch (opt) {
 
@@ -8434,6 +8257,16 @@ int main(int argc, char** argv) {
 
         break;
 
+      case 'g': { /* specify cfg file path */
+
+        if (cfg_file) FATAL("Multiple -g options not supported");
+      
+        cfg_file = optarg;
+
+      }
+
+      break;
+
       case 'V': /* Show version number */
 
         /* Version number has been printed already, just quit. */
@@ -8454,6 +8287,10 @@ int main(int argc, char** argv) {
       cooling_schedule == SAN_QUAD ? "QUAD" : "???",
       t_x
   );
+  
+  if (!cfg_file) {
+    FATAL("cfg not found");
+  } else OKF("cfg file path: %s", cfg_file);
 
   setup_signal_handlers();
   check_asan_opts();
@@ -8534,6 +8371,8 @@ int main(int argc, char** argv) {
   else
     use_argv = argv + optind;
 
+  read_cfg();
+
   perform_dry_run(use_argv);
 
   cull_queue();
@@ -8542,7 +8381,7 @@ int main(int argc, char** argv) {
 
   seek_to = find_start_position();
 
-  write_stats_file(0, 0, 0, 0);
+  write_stats_file(0, 0, 0);
   save_auto();
 
   if (stop_soon) goto stop_fuzzing;
@@ -8629,7 +8468,8 @@ int main(int argc, char** argv) {
   }
 
   write_bitmap();
-  write_stats_file(0, 0, 0, 0);
+
+  write_stats_file(0, 0, 0);
   save_auto();
 
 stop_fuzzing:
